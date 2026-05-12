@@ -20,24 +20,28 @@ const documentSections = [
     title: "Tender Overview",
     active: true,
     icon: <MdOutlineChecklist className="h-4 w-4" />,
+    link: "/document#tender-overview",
   },
   {
     id: 2,
     title: "Requirements Breakdown",
     active: false,
     icon: <LuListTodo className="h-4 w-4" />,
+    link: "/document#requirements-breakdown",
   },
   {
     id: 3,
     title: "Action Items & Tasks",
     active: false,
     icon: <LuListTodo className="h-4 w-4" />,
+    link: "/document#action-items",
   },
   {
     id: 4,
     title: "Delivery Timeline",
     active: false,
     icon: <LuListTodo className="h-4 w-4" />,
+    link: "/document#delivery-timeline",
   },
 ];
 
@@ -110,7 +114,7 @@ export default function AnalysisPreviewModal({
                       : "border-slate-200 bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <a href={section.link} className="flex items-center gap-3">
                     <div
                       className={`h-5 w-5 rounded border flex items-center justify-center ${
                         section.active
@@ -125,7 +129,7 @@ export default function AnalysisPreviewModal({
                       {section.icon}
                       {section.title}
                     </div>
-                  </div>
+                  </a>
                 </button>
               ))}
             </div>

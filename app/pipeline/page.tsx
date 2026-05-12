@@ -61,7 +61,61 @@ const underReview: PipelineItem[] = [
     match: 82,
   },
 ];
-
+const inProgress: PipelineItem[] = [
+  {
+    id: "6",
+    ref: "#TR-2024-091",
+    title: "Urban Green Spaces Development",
+    organization: "City Planning Department",
+    budget: "$1.8M",
+    daysLeft: 20,
+    match: 95,
+  },
+];
+const blocked: PipelineItem[] = [
+  {
+    id: "7",
+    ref: "#TR-2024-077",
+    title: "Statewide Broadband Expansion",
+    organization: "State Communications Office",
+    budget: "$3.5M",
+    daysLeft: 10,
+    match: 89,
+  },
+];
+const submitted: PipelineItem[] = [
+  {
+    id: "8",
+    ref: "#TR-2024-033",
+    title: "Emergency Response AI System",
+    organization: "Homeland Security",
+    budget: "$4.7M",
+    daysLeft: 5,
+    match: 92,
+  },
+];
+const onHold: PipelineItem[] = [
+  {
+    id: "9",
+    ref: "#TR-2024-056",
+    title: "Water Quality Monitoring Upgrade",
+    organization: "Environmental Protection Agency",
+    budget: "$600K",
+    daysLeft: 18,
+    match: 85,
+  },
+];
+const Viable: PipelineItem[] = [
+  {
+    id: "10",
+    ref: "#TR-2024-022",
+    title: "Smart City Traffic Optimization",
+    organization: "City Transportation Dept.",
+    budget: "$2.9M",
+    daysLeft: 7,
+    match: 90,
+  },
+];
 // const sortedNewTenders = [...newTenders].sort(
 //   (a, b) => a.daysLeft - b.daysLeft,
 // );
