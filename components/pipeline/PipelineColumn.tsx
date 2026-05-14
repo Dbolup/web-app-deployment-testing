@@ -8,6 +8,7 @@ export interface PipelineItem {
   daysLeft: number;
   match: number;
   ref: string;
+  href?: string;
 }
 interface Props {
   title: string;

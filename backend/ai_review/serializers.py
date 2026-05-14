@@ -1,0 +1,62 @@
+from rest_framework import serializers
+from .models import CompanyProfile, AIReview, HumanFeedback
+
+
+class CompanyProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CompanyProfile
+        exclude = ['workspace']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class HumanFeedbackSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.CharField(source='reviewer.full_name', read_only=True)
+
+    class Meta:
+        model = HumanFeedback
+        exclude = ['ai_review', 'reviewer']
+        read_only_fields = ['id', 'created_at', 'reviewer_name']
+
+
+class AIReviewSerializer(serializers.ModelSerializer):
+    tender_ref_id = serializers.CharField(source='tender.ref_id', read_only=True)
+    tender_title = serializers.CharField(source='tender.title', read_only=True)
+    human_feedback = HumanFeedbackSerializer(read_only=True)
+
+    class Meta:
+        model = AIReview
+        exclude = ['workspace']
+        read_only_fields = [
+            'id', 'tender', 'tender_ref_id', 'tender_title',
+            'ai_score', 'feasibility_score', 'risk_level', 'capability_alignment',
+            'executive_summary', 'recommendation', 'rationale',
+            'review_status', 'model_used', 'error_message',
+            'created_at', 'updated_at',
+        ]
+
+
+class HumanFeedbackCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HumanFeedback
+        fields = ['agreed_with_recommendation', 'override_recommendation', 'feedback_text']
+
+    def validate_override_recommendation(self, value):
+        valid = [c.value for c in AIReview.Recommendation]
+        if value and value not in valid:
+            raise serializers.ValidationError(f'Must be one of: {", ".join(valid)}')
+        return value
+
+
+class TenderSuggestionSerializer(serializers.Serializer):
+    ref_id = serializers.CharField()
+    title = serializers.CharField()
+    organization = serializers.CharField()
+    deadline = serializers.DateTimeField()
+    budget_min = serializers.FloatField(allow_null=True)
+    budget_max = serializers.FloatField(allow_null=True)
+    industry = serializers.CharField(allow_null=True)
+    ai_score = serializers.IntegerField(allow_null=True)
+    feasibility_score = serializers.IntegerField(allow_null=True)
+    risk_level = serializers.CharField(allow_null=True)
+    recommendation = serializers.CharField(allow_null=True)
+    executive_summary = serializers.CharField(allow_null=True)

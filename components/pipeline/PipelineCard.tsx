@@ -1,4 +1,5 @@
 // components/pipeline/PipelineCard.tsx
+import Link from "next/link";
 import { MdAutoAwesome } from "react-icons/md";
 import { PipelineItem } from "./PipelineColumn";
 
@@ -9,8 +10,8 @@ export default function PipelineCard({ item }: { item: PipelineItem }) {
     return "bg-slate-100 text-slate-600";
   };
 
-  return (
-    <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3 hover:shadow-md transition">
+  const inner = (
+    <div className="bg-white border rounded-xl p-4 shadow-sm space-y-3 hover:shadow-md transition cursor-pointer">
       <div className="flex justify-between items-center">
         <p className="text-[11px] font-bold text-slate-400">{item.ref}</p>
 
@@ -41,6 +42,8 @@ export default function PipelineCard({ item }: { item: PipelineItem }) {
       </div>
     </div>
   );
+
+  return item.href ? <Link href={item.href}>{inner}</Link> : inner;
 }
 /*{
                 "on-tertiary-fixed-variant": "#653e00",

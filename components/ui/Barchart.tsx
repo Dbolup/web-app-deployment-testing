@@ -1,15 +1,11 @@
 "use client";
 
-import { TrendingUp } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts";
 
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardFooter,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -22,79 +18,58 @@ import {
 
 export const description = "A stacked bar chart with a legend";
 
-const chartData = [
-  { week: "Week 1", desktop: 186, mobile: 80, tablet: 160 },
-  { week: "Week 2", desktop: 305, mobile: 200, tablet: 100 },
-  { week: "Week 3", desktop: 237, mobile: 120, tablet: 120 },
-  { week: "Week 4", desktop: 73, mobile: 190, tablet: 90 },
-  //   { week: "May", desktop: 209, mobile: 130, tablet: 150 },
-  //   { week: "June", desktop: 214, mobile: 140, tablet: 110 },
+const FALLBACK_DATA = [
+  { label: "Week 1", count: 0 },
+  { label: "Week 2", count: 0 },
+  { label: "Week 3", count: 0 },
+  { label: "Week 4", count: 0 },
 ];
 
 const chartConfig = {
-  desktop: {
-    label: "Desktop",
-    color: "#F5F7FE",
-  },
-  mobile: {
-    label: "Mobile",
-    color: "#D8F7FA",
-  },
-  tablet: {
-    label: "Tablet",
+  count: {
+    label: "Tenders",
     color: "#00236f",
   },
 } satisfies ChartConfig;
 
-export function ChartBarStacked() {
+interface TrendPoint { date: string; count: number; }
+
+export function groupTrendByWeek(trend: TrendPoint[]): { label: string; count: number }[] {
+  if (!trend.length) return FALLBACK_DATA;
+  const buckets: Record<string, number> = {};
+  trend.forEach(({ date, count }) => {
+    const d = new Date(date);
+    const weekNum = Math.ceil((d.getDate()) / 7);
+    const key = `${d.toLocaleString('default', { month: 'short' })} W${weekNum}`;
+    buckets[key] = (buckets[key] ?? 0) + count;
+  });
+  return Object.entries(buckets).map(([label, count]) => ({ label, count }));
+}
+
+export function ChartBarStacked({ data }: { data?: { label: string; count: number }[] }) {
+  const chartData = data?.length ? data : FALLBACK_DATA;
   return (
     <Card className="">
-      <CardHeader>
-        {/* <CardTitle>Bar Chart - Stacked + Legend</CardTitle> */}
-        {/* <CardDescription>January - June 2024</CardDescription> */}
-      </CardHeader>
+      <CardHeader />
       <CardContent>
         <ChartContainer config={chartConfig}>
           <BarChart accessibilityLayer data={chartData}>
             <CartesianGrid vertical={false} />
             <XAxis
-              dataKey="week"
+              dataKey="label"
               tickLine={false}
               tickMargin={10}
               axisLine={false}
-              //   tickFormatter={(value) => value.slice(0, 3)}
             />
             <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-            {/* <ChartLegend content={<ChartLegendContent />} /> */}
             <Bar
-              dataKey="desktop"
-              stackId="a"
-              fill="var(--color-desktop)"
-              radius={[0, 0, 4, 4]}
-            />
-            <Bar
-              dataKey="mobile"
-              stackId="a"
-              fill="var(--color-mobile)"
-              radius={[4, 4, 0, 0]}
-            />
-            <Bar
-              dataKey="tablet"
-              stackId="a"
-              fill="var(--color-tablet)"
+              dataKey="count"
+              fill="var(--color-count)"
               radius={[4, 4, 0, 0]}
             />
           </BarChart>
         </ChartContainer>
       </CardContent>
-      {/* <CardFooter className="flex-col items-start gap-2 text-sm">
-        <div className="flex gap-2 leading-none font-medium">
-          Trending up by 5.2% this month <TrendingUp className="h-4 w-4" />
-        </div>
-        <div className="leading-none text-muted-foreground">
-          Showing total visitors for the last 6 months
-        </div>
-      </CardFooter> */}
     </Card>
   );
 }

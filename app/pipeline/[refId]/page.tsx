@@ -1,71 +1,165 @@
-import Image from "next/image";
+"use client";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import {
-  Bell,
-  MessageSquare,
-  LayoutDashboard,
-  Search,
-  FileText,
-  FolderKanban,
-  Settings,
-  HelpCircle,
-  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   Share2,
   Download,
+  Loader2,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldX,
 } from "lucide-react";
-interface TenderDetailsPageProps {
-  params: {
-    refId: string;
-  };
+import {
+  getTenderDetail,
+  getAIReview,
+  triggerAIReview,
+  getPipelineItems,
+  movePipelineItem,
+  addToPipeline,
+  removePipelineItem,
+  TenderDetail,
+  AIReviewData,
+  BackendPipelineItem,
+} from "@/lib/api";
+
+const RISK_COLORS = {
+  low: { text: "text-[#16a34a]", icon: <ShieldCheck className="h-8 w-8" /> },
+  medium: { text: "text-[#d97706]", icon: <ShieldAlert className="h-8 w-8" /> },
+  high: { text: "text-[#ef4444]", icon: <ShieldX className="h-8 w-8" /> },
+};
+
+const RECOMMENDATION_LABELS = {
+  pursue: { label: "Pursue", color: "text-[#16a34a] bg-[#f0fdf4] border-[#bbf7d0]" },
+  review: { label: "Review", color: "text-[#d97706] bg-[#fffbeb] border-[#fde68a]" },
+  skip: { label: "Skip", color: "text-[#ef4444] bg-[#fff5f5] border-[#fecaca]" },
+};
+
+function formatBudget(t: TenderDetail): string {
+  if (t.budget_display) return t.budget_display;
+  if (t.budget_min !== null && t.budget_max !== null)
+    return `£${(Number(t.budget_min) / 1e6).toFixed(1)}M – £${(Number(t.budget_max) / 1e6).toFixed(1)}M`;
+  if (t.budget_max !== null) return `Up to £${(Number(t.budget_max) / 1e6).toFixed(1)}M`;
+  return 'TBD';
 }
-export default async function TenderAnalysisPage({
-  params,
-}: TenderDetailsPageProps) {
-  const { refId } = await params;
 
-  const tenders = [
-    {
-      id: "tr-2024-001",
-      refId: "#TR-2024-001",
-      percentage: 94,
-      dueDays: "4 days",
-      title: "municipal smart infrastructure grid expansion",
-      budget: "$2.5M",
-      rfp: "2024-FED-011",
-      department: "dept. of transportation & urban dev",
-    },
-    {
-      id: "tr-2024-089",
-      refId: "#TR-2024-089",
-      percentage: 88,
-      dueDays: "12 days",
-      title: "enterprise cyber security framework refresh",
-      budget: "$850K",
-      rfp: "2024-FED-011",
-      department: "federal information security agency",
-    },
-  ];
+function formatDeadline(t: TenderDetail): string {
+  if (!t.deadline) return 'No deadline set';
+  const d = new Date(t.deadline);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+}
 
-  const tender = tenders.find((item) => item.id === refId);
+export default function TenderAnalysisPage() {
+  const params = useParams();
+  const router = useRouter();
+  const refId = params?.refId as string;
+  const fromDiscovery = typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('from') === 'discovery';
 
-  if (!tender) {
-    return <div className="p-10">Tender not found</div>;
+  const [tender, setTender] = useState<TenderDetail | null>(null);
+  const [review, setReview] = useState<AIReviewData | null>(null);
+  const [pipelineItem, setPipelineItem] = useState<BackendPipelineItem | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!refId) return;
+    Promise.all([
+      getTenderDetail(refId),
+      getAIReview(refId),
+      getPipelineItems(),
+    ])
+      .then(([t, r, items]) => {
+        setTender(t);
+        setReview(r);
+        const found = items.find((i) => i.tender.ref_id === refId) ?? null;
+        setPipelineItem(found);
+      })
+      .catch((err) => setError(err.message ?? 'Failed to load tender'))
+      .finally(() => setLoading(false));
+  }, [refId]);
+
+  async function handleRunReview() {
+    if (!tender) return;
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const r = await triggerAIReview(refId);
+      setReview(r);
+    } catch (err: any) {
+      setReviewError(err.message ?? 'AI review failed');
+    } finally {
+      setReviewLoading(false);
+    }
   }
 
-  return (
-    // <div className="min-h-screen bg-[#f5f7fc] flex text-[#151c27]">
+  async function handleAction(stage: string, label: string) {
+    if (!tender) return;
+    setActionLoading(true);
+    setActionMsg(null);
+    try {
+      if (pipelineItem) {
+        const updated = await movePipelineItem(pipelineItem.id, stage);
+        setPipelineItem(updated);
+      } else {
+        const added = await addToPipeline(tender.id, stage);
+        setPipelineItem(added);
+      }
+      setActionMsg(`Marked as ${label}`);
+    } catch (err: any) {
+      setActionMsg(err.message ?? 'Action failed');
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
+  async function handleDiscard() {
+    if (!pipelineItem) { router.push('/pipeline'); return; }
+    setActionLoading(true);
+    try {
+      await removePipelineItem(pipelineItem.id);
+      router.push('/pipeline');
+    } catch {
+      setActionLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <main className="flex-1 flex items-center justify-center h-full">
+        <Loader2 className="h-8 w-8 animate-spin text-[#00236f]" />
+      </main>
+    );
+  }
+
+  if (error || !tender) {
+    return (
+      <main className="flex-1 p-10 text-red-500">
+        {error ?? 'Tender not found'}
+      </main>
+    );
+  }
+
+  const riskStyle = review?.risk_level ? RISK_COLORS[review.risk_level] : null;
+  const recStyle = review?.recommendation ? RECOMMENDATION_LABELS[review.recommendation] : null;
+
+  return (
     <main className="flex-1 flex flex-col overflow-hidden">
-      {/* Content */}
       <div className="flex-1 overflow-y-auto p-8">
         {/* Breadcrumb */}
         <div className="flex items-center gap-3 text-[12px] uppercase tracking-wide font-bold text-[#a1a9b8]">
-          <span>Active Pipeline</span>
+          {fromDiscovery ? (
+            <a href="/discovery" className="hover:text-[#00236f]">Discovery</a>
+          ) : (
+            <a href="/pipeline" className="hover:text-[#00236f]">Pipeline</a>
+          )}
           <span>/</span>
-          <span>US Federal Tenders</span>
-          <span>/</span>
-          <span>ID: TF-9982-A</span>
+          <span>{tender.ref_id}</span>
         </div>
 
         {/* Grid */}
@@ -77,237 +171,234 @@ export default async function TenderAnalysisPage({
               <div className="flex items-start justify-between">
                 <div>
                   <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 shadow-md text-sm font-bold">
-                    RFP: {tender.rfp}
+                    {tender.notice_type || 'Tender'}
                   </div>
 
-                  <h1 className="mt-6 text-5xl leading-[1.05] font-black text-[#173b8f] max-w-[700px] capitalize">
+                  <h1 className="mt-6 text-4xl leading-[1.1] font-black text-[#173b8f] max-w-[700px] capitalize">
                     {tender.title}
                   </h1>
 
-                  <p className="mt-6 text-[22px] leading-[1.8] text-slate-500 max-w-[800px]">
-                    The Department of General Services is seeking comprehensive
-                    proposals for the large-scale modernization of legacy
-                    systems across three major federal agencies.
-                  </p>
+                  <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-500">
+                    <span><b>Organisation:</b> {tender.organization}</span>
+                    {tender.department && <span><b>Department:</b> {tender.department}</span>}
+                    <span><b>Budget:</b> {formatBudget(tender)}</span>
+                    <span><b>Deadline:</b> {formatDeadline(tender)}</span>
+                    {tender.location && <span><b>Location:</b> {tender.location}</span>}
+                  </div>
+
+                  {tender.description && (
+                    <p className="mt-6 text-[18px] leading-[1.8] text-slate-500 max-w-[700px]">
+                      {tender.description}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-5 text-slate-400">
-                  <button className="p-1.5 hover:bg-slate-50 rounded transition-colors text-slate-400">
-                    <Share2 className="h-6 w-6" />
-                  </button>
-
-                  <button className="p-1.5 hover:bg-slate-50 rounded transition-colors text-slate-400">
-                    <Download className="h-6 w-6" />
-                  </button>
+                  {tender.source_url && (
+                    <a
+                      href={tender.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 hover:bg-slate-50 rounded transition-colors"
+                    >
+                      <Share2 className="h-6 w-6" />
+                    </a>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Body */}
-            <div className="p-8">
-              {/* Section Title */}
-              <div className="flex items-center gap-3 mb-6">
-                <div className=" flex items-center justify-center text-[#173b8f]">
-                  <FileText className="h-5 w-5" />
+            <div className="p-8 space-y-8">
+              {tender.scope && (
+                <div>
+                  <h2 className="text-xl font-bold text-[#173b8f] mb-3">Project Scope</h2>
+                  <p className="text-[16px] leading-[1.8] text-slate-600">{tender.scope}</p>
                 </div>
+              )}
 
-                <h2 className="text-[24px] font-bold text-[#173b8f]">
-                  Project Scope & Requirements
-                </h2>
-              </div>
-
-              <div className="space-y-8 text-[22px] leading-[2] text-slate-600">
-                <p>
-                  The primary objective is to transition from on-premise
-                  monolithic architectures to
-                  <span className="font-bold text-[#173b8f] underline ml-2">
-                    secure cloud-native environments
-                  </span>
-                  . Vendors must demonstrate a minimum of 10 years experience in
-                  public sector digital transformation.
-                </p>
-
-                <p>
-                  Required services include but are not limited to
-                  <span className="font-bold text-[#173b8f] underline ml-2">
-                    Cloud Migration
-                  </span>
-                  of 500+ microservices, data lake consolidation, and continuous
-                  integration pipelines.
-                  <span className="font-bold text-[#173b8f] underline ml-2">
-                    Post-Migration Support
-                  </span>
-                  for a duration of 24 months.
-                </p>
-
-                <p>
-                  Security is paramount. All personnel involved in the project
-                  must hold an
-                  <span className="font-bold text-[#b45309] underline ml-2">
-                    On-site Security Clearance Level 4
-                  </span>
-                  or higher.
-                </p>
-              </div>
-
-              {/* Image */}
-              <div className="mt-10 rounded-2xl overflow-hidden border border-slate-200 h-[320px] bg-[#061c3d] flex items-center justify-center">
-                <div className="text-center text-cyan-300">
-                  <div className="text-7xl mb-4">🌐</div>
-                  <p className="text-xl font-semibold">
-                    Infrastructure Visualization
-                  </p>
+              {Array.isArray(tender.deliverables) && tender.deliverables.length > 0 && (
+                <div>
+                  <h2 className="text-xl font-bold text-[#173b8f] mb-3">Deliverables</h2>
+                  <ul className="list-disc list-inside space-y-1 text-slate-600">
+                    {tender.deliverables.map((d, i) => (
+                      <li key={i}>{String(d)}</li>
+                    ))}
+                  </ul>
                 </div>
-              </div>
+              )}
 
-              <p className="mt-8 text-[22px] leading-[2] text-slate-600">
-                Final delivery milestones are structured across four phases over
-                an 18-month timeline. Phase I focuses on discovery and
-                assessment, followed by environment provisioning in Phase II.
-              </p>
+              {!tender.scope && !tender.description && (
+                <p className="text-slate-400 text-sm italic">
+                  No detailed description available for this tender.
+                </p>
+              )}
             </div>
           </section>
 
-          {/* Right Sidebar */}
+          {/* Right Sidebar — AI Analysis */}
           <aside className="col-span-4 bg-white rounded-3xl border border-[#e5e7eb] overflow-hidden shadow-sm flex flex-col">
             <div className="p-6 border-b border-[#eef1f6]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3 bg-[#71f8e4]/20 border border-[#71f8e4] px-4 py-2 rounded-full text-[#006f64] text-sm font-bold">
                   ✦ AI Intelligence Layer
                 </div>
-
-                <span className="text-sm font-medium text-slate-400">
-                  Refreshed 2m ago
-                </span>
+                {review && (
+                  <span className="text-sm font-medium text-slate-400">
+                    {new Date(review.created_at).toLocaleDateString()}
+                  </span>
+                )}
               </div>
-
-              <h2 className="mt-6 text-[42px] font-black text-[#173b8f]">
-                Tender Analysis
-              </h2>
+              <h2 className="mt-6 text-[38px] font-black text-[#173b8f]">Tender Analysis</h2>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 p-6">
-              <div className="border border-[#e5e7eb] rounded-2xl p-5">
-                <p className="text-sm font-bold text-slate-400">
-                  Feasibility Score
+            {/* Review state */}
+            {!review && !reviewLoading && (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
+                <p className="text-slate-500 text-sm text-center">
+                  No AI review yet for this tender.
                 </p>
+                {reviewError && (
+                  <p className="text-red-500 text-sm text-center">{reviewError}</p>
+                )}
+                <button
+                  onClick={handleRunReview}
+                  className="px-6 py-3 bg-[#00236f] text-white font-bold rounded-xl text-sm hover:bg-[#1e3a8a] transition-colors"
+                >
+                  Run AI Review
+                </button>
+              </div>
+            )}
 
-                <div className="mt-4 flex items-center gap-4">
-                  <span className="text-[42px] font-black text-[#006f64]">
-                    {tender.percentage}%
-                  </span>
+            {reviewLoading && (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-[#00236f]" />
+                <p className="text-slate-500 text-sm">Analysing with AI…</p>
+              </div>
+            )}
 
-                  <div className="flex-1 h-3 rounded-full bg-[#dff7f3] overflow-hidden">
-                    <div className="w-[85%] h-full bg-[#006f64] rounded-full" />
+            {review && !reviewLoading && (
+              <>
+                {/* Scores */}
+                <div className="grid grid-cols-2 gap-4 p-6">
+                  <div className="border border-[#e5e7eb] rounded-2xl p-5">
+                    <p className="text-sm font-bold text-slate-400">AI Score</p>
+                    <div className="mt-4 flex items-center gap-4">
+                      <span className="text-[42px] font-black text-[#006f64]">
+                        {review.ai_score ?? '—'}
+                      </span>
+                      {review.ai_score !== null && (
+                        <div className="flex-1 h-3 rounded-full bg-[#dff7f3] overflow-hidden">
+                          <div
+                            className="h-full bg-[#006f64] rounded-full"
+                            style={{ width: `${review.ai_score}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border border-[#e5e7eb] rounded-2xl p-5">
+                    <p className="text-sm font-bold text-slate-400">Risk Level</p>
+                    <div className={`mt-4 flex items-center gap-3 ${riskStyle?.text ?? 'text-slate-400'}`}>
+                      <span className="text-[32px] font-black capitalize">
+                        {review.risk_level ?? '—'}
+                      </span>
+                      {riskStyle?.icon}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="border border-[#e5e7eb] rounded-2xl p-5">
-                <p className="text-sm font-bold text-slate-400">Risk Level</p>
-
-                <div className="mt-4 flex items-center gap-3 text-[#16a34a]">
-                  <span className="text-[42px] font-black">Low</span>
-                  <ShieldCheck className="h-8 w-8" />
-                </div>
-              </div>
-            </div>
-
-            <div className="px-6">
-              <div className="flex items-center justify-between mb-5">
-                <h3 className="text-[24px] font-bold text-[#173b8f]">
-                  Capability Alignment
-                </h3>
-
-                <span className="text-sm font-semibold text-slate-400">
-                  3 of 4 Found
-                </span>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border border-[#e5e7eb] rounded-2xl p-5">
-                  <div className="flex items-center gap-4">
-                    <CheckCircle2 className="h-6 w-6 text-[#22c55e]" />
-
-                    <span className="text-lg font-semibold text-slate-700">
-                      Cloud Migration
+                {/* Recommendation */}
+                {recStyle && (
+                  <div className="px-6 pb-4">
+                    <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-bold border ${recStyle.color}`}>
+                      Recommendation: {recStyle.label}
                     </span>
                   </div>
+                )}
 
-                  <span className="text-xs uppercase font-bold text-[#22c55e]">
-                    Requirement Met
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between border border-[#e5e7eb] rounded-2xl p-5">
-                  <div className="flex items-center gap-4">
-                    <CheckCircle2 className="h-6 w-6 text-[#22c55e]" />
-
-                    <span className="text-lg font-semibold text-slate-700">
-                      Post-Migration Support
-                    </span>
+                {/* Capability alignment */}
+                {review.capability_alignment.length > 0 && (
+                  <div className="px-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xl font-bold text-[#173b8f]">Capability Alignment</h3>
+                      <span className="text-sm font-semibold text-slate-400">
+                        {review.capability_alignment.filter((c) => c.met).length} of {review.capability_alignment.length} met
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {review.capability_alignment.map((cap, i) => (
+                        <div
+                          key={i}
+                          className={`flex items-center justify-between rounded-2xl p-4 border ${cap.met ? 'border-[#e5e7eb]' : 'border-[#fecaca] bg-[#fff5f5]'}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            {cap.met
+                              ? <CheckCircle2 className="h-5 w-5 text-[#22c55e]" />
+                              : <AlertCircle className="h-5 w-5 text-[#ef4444]" />}
+                            <span className={`text-sm font-semibold ${cap.met ? 'text-slate-700' : 'text-[#b91c1c]'}`}>
+                              {cap.label}
+                            </span>
+                          </div>
+                          <span className={`text-xs uppercase font-bold ${cap.met ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+                            {cap.met ? 'Met' : 'Missing'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                )}
 
-                  <span className="text-xs uppercase font-bold text-[#22c55e]">
-                    Requirement Met
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between border border-[#e5e7eb] rounded-2xl p-5">
-                  <div className="flex items-center gap-4">
-                    <CheckCircle2 className="h-6 w-6 text-[#22c55e]" />
-
-                    <span className="text-lg font-semibold text-slate-700">
-                      Microservices Auth
-                    </span>
+                {/* Executive summary */}
+                {review.executive_summary && (
+                  <div className="p-6">
+                    <div className="rounded-2xl border border-[#dce4ff] bg-[#edf2ff] p-6">
+                      <h4 className="text-xl font-bold text-[#173b8f] mb-3">Executive Summary</h4>
+                      <p className="italic text-[16px] leading-[1.8] text-[#4f5d95]">
+                        &ldquo;{review.executive_summary}&rdquo;
+                      </p>
+                    </div>
                   </div>
+                )}
 
-                  <span className="text-xs uppercase font-bold text-[#22c55e]">
-                    Requirement Met
-                  </span>
+                {/* Re-run button */}
+                <div className="px-6 pb-2">
+                  <button
+                    onClick={handleRunReview}
+                    className="text-sm text-slate-400 hover:text-[#00236f] underline"
+                  >
+                    Re-run AI review
+                  </button>
                 </div>
+              </>
+            )}
 
-                <div className="flex items-center justify-between border border-[#fecaca] bg-[#fff5f5] rounded-2xl p-5">
-                  <div className="flex items-center gap-4">
-                    <AlertCircle className="h-6 w-6 text-[#ef4444]" />
-
-                    <span className="text-lg font-semibold text-[#b91c1c]">
-                      Security Clearance Level 4
-                    </span>
-                  </div>
-
-                  <span className="text-xs uppercase font-bold text-[#ef4444]">
-                    Missing
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6 mt-6">
-              <div className="rounded-2xl border border-[#dce4ff] bg-[#edf2ff] p-6">
-                <h4 className="text-[24px] font-bold text-[#173b8f]">
-                  Executive Summary
-                </h4>
-
-                <p className="mt-4 italic text-[18px] leading-[2] text-[#4f5d95]">
-                  “This tender presents a high-value opportunity with an 85%
-                  technical match. Our proprietary CloudScale framework directly
-                  addresses all infrastructure requirements.”
-                </p>
-              </div>
-            </div>
-
+            {/* Action buttons */}
             <div className="mt-auto p-6 space-y-4 border-t border-[#eef1f6]">
-              <button className="w-full h-14 rounded-xl bg-[#233f97] text-white font-bold text-lg shadow-lg shadow-blue-900/20 hover:bg-[#173b8f] transition-colors">
-                Mark as Viable
+              {actionMsg && (
+                <p className="text-sm text-center text-[#006b5f] font-semibold">{actionMsg}</p>
+              )}
+              <button
+                disabled={actionLoading}
+                onClick={() => handleAction('viable', 'Viable')}
+                className="w-full h-14 rounded-xl bg-[#233f97] text-white font-bold text-lg shadow-lg shadow-blue-900/20 hover:bg-[#173b8f] transition-colors disabled:opacity-60"
+              >
+                {actionLoading ? <Loader2 className="h-5 w-5 animate-spin mx-auto" /> : 'Mark as Viable'}
               </button>
-
               <div className="grid grid-cols-2 gap-4">
-                <button className="h-14 rounded-xl border border-[#dce2f3] text-slate-600 font-semibold hover:bg-slate-50 transition-colors">
+                <button
+                  disabled={actionLoading}
+                  onClick={() => handleAction('under_review', 'Under Review')}
+                  className="h-14 rounded-xl border border-[#dce2f3] text-slate-600 font-semibold hover:bg-slate-50 transition-colors disabled:opacity-60"
+                >
                   Send for Review
                 </button>
-
-                <button className="h-14 rounded-xl border border-[#fecaca] text-[#ef4444] font-semibold hover:bg-[#fff5f5] transition-colors">
+                <button
+                  disabled={actionLoading}
+                  onClick={handleDiscard}
+                  className="h-14 rounded-xl border border-[#fecaca] text-[#ef4444] font-semibold hover:bg-[#fff5f5] transition-colors disabled:opacity-60"
+                >
                   Discard
                 </button>
               </div>

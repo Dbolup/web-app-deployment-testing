@@ -1,17 +1,11 @@
 "use client";
 
-import { Bot, Settings, User } from "lucide-react";
+import { User } from "lucide-react";
 import { BiCloudUpload } from "react-icons/bi";
-import { FaRobot } from "react-icons/fa6";
 import { MdEditNote, MdSmartToy } from "react-icons/md";
-type Activity = {
-  id: string;
-  prefix: string;
-  highlight: string;
-  time: string;
-  type: string;
-};
-const activityStyles: any = {
+import { ActivityItem } from "@/lib/api";
+
+const activityStyles: Record<string, { icon: React.ReactNode; bg: string; text: string }> = {
   ai: {
     icon: <MdSmartToy className="w-4 h-4" />,
     bg: "bg-[#006b5f]/10",
@@ -33,67 +27,54 @@ const activityStyles: any = {
     text: "text-[#ef9900]",
   },
 };
-const activities: Activity[] = [
-  {
-    id: "1",
-    prefix: "AI analyzed",
-    highlight: "Tender #402",
-    time: "2 mins ago",
-    type: "ai",
-  },
-  {
-    id: "2",
-    highlight: "Confluence",
-    prefix: "Proposal pushed to ",
-    time: "1 hour ago",
-    type: "system",
-  },
-  {
-    id: "3",
-    highlight: "Smart City RFP",
-    prefix: "Draft updated for ",
-    time: "3 hours ago",
-    type: "drafted",
-  },
-  {
-    id: "4",
-    highlight: "Sarah Miller",
-    prefix: "Alex invited ",
-    time: "Yesterday",
-    type: "user",
-  },
-];
 
-export default function ActivityCard() {
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min${mins > 1 ? 's' : ''} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs > 1 ? 's' : ''} ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+}
+
+export default function ActivityCard({ activities }: { activities?: ActivityItem[] }) {
+  const items = activities ?? [];
+
   return (
-    <div className="bg-white p-6 rounded-xl border  ">
+    <div className="bg-white p-6 rounded-xl border">
       <h3 className="font-bold text-2xl text-[#00236f] mb-4">
         Recent Activity
       </h3>
 
-      <ul className="space-y-10">
-        {activities.map((item) => {
-          const style = activityStyles[item.type] || activityStyles.system; // fallback
+      {items.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-8">No activity yet.</p>
+      ) : (
+        <ul className="space-y-10">
+          {items.map((item) => {
+            const style = activityStyles[item.activity_type] ?? activityStyles.system;
+            return (
+              <li key={item.id} className="flex items-start gap-3">
+                <div className={`p-2 rounded-lg ${style.bg} ${style.text}`}>
+                  {style.icon}
+                </div>
+                <div>
+                  <p className="text-base text-gray-700 w-50">
+                    {item.prefix}{" "}
+                    <span className="font-bold">{item.highlight}</span>
+                  </p>
+                  <p className="text-sm text-gray-500">{relativeTime(item.created_at)}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
-          return (
-            <li key={item.id} className="flex items-start gap-3">
-              <div className={`p-2 rounded-lg ${style.bg} ${style.text}`}>
-                {style.icon}
-              </div>
-
-              <div>
-                <p className="text-base text-gray-700 w-50">
-                  {item.prefix}{" "}
-                  <span className="font-bold">{item.highlight}</span>
-                </p>
-                <p className="text-sm text-gray-500">{item.time}</p>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
       <div className="flex justify-center">
-        <button className="text-[#173c77] text-base mt-5 text-center font-sembold">
+        <button className="text-[#173c77] text-base mt-5 text-center font-semibold">
           View All Activity
         </button>
       </div>
