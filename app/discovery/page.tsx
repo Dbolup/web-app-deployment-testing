@@ -16,7 +16,7 @@ export default function Discovery() {
   }
 
   return (
-    <div className="flex">
+    <div className="flex h-full overflow-hidden">
       <FilterSidebar filters={filters} onFilterChange={updateFilters} />
       <TenderTable filters={filters} onFilterChange={updateFilters} onPageChange={setPage} />
     </div>

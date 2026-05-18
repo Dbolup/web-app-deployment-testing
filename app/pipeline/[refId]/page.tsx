@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Share2,
-  Download,
   Loader2,
   ShieldCheck,
   ShieldAlert,
@@ -50,6 +49,118 @@ function formatDeadline(t: TenderDetail): string {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function RiskConfirmModal({
+  review,
+  tenderTitle,
+  onConfirm,
+  onCancel,
+}: {
+  review: AIReviewData;
+  tenderTitle: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const missingCaps = review.capability_alignment.filter((c) => !c.met);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+
+      <div className="relative bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
+        {/* Header */}
+        <div className="bg-[#fff5f5] border-b border-[#fecaca] px-6 py-5 flex items-start gap-4">
+          <div className="shrink-0 mt-0.5">
+            <ShieldX className="h-7 w-7 text-[#ef4444]" />
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-[#ef4444] mb-1">
+              High Risk — AI Warning
+            </p>
+            <h2 className="text-lg font-bold text-[#151c27] leading-snug">
+              {tenderTitle}
+            </h2>
+          </div>
+        </div>
+
+        <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
+          {/* Risk badges */}
+          <div className="flex flex-wrap gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#fee2e2] text-[#dc2626] border border-[#fecaca]">
+              <ShieldX className="h-3.5 w-3.5" /> High Risk
+            </span>
+            {review.recommendation === 'skip' && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#fee2e2] text-[#dc2626] border border-[#fecaca]">
+                AI Recommendation: Skip
+              </span>
+            )}
+            {review.ai_score !== null && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600">
+                AI Score: {review.ai_score}%
+              </span>
+            )}
+          </div>
+
+          {/* Rationale */}
+          {review.rationale && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">
+                AI Rationale
+              </p>
+              <p className="text-sm text-slate-600 leading-relaxed">{review.rationale}</p>
+            </div>
+          )}
+
+          {/* Missing capabilities */}
+          {missingCaps.length > 0 && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">
+                Unmet Requirements ({missingCaps.length})
+              </p>
+              <ul className="space-y-1.5">
+                {missingCaps.map((cap, i) => (
+                  <li key={i} className="flex items-center gap-2 text-sm text-[#b91c1c]">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {cap.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Executive summary */}
+          {review.executive_summary && (
+            <div className="rounded-xl border border-[#fecaca] bg-[#fff5f5] p-4">
+              <p className="text-xs font-bold uppercase tracking-widest text-[#ef4444] mb-2">
+                Executive Summary
+              </p>
+              <p className="text-sm italic text-slate-600 leading-relaxed">
+                &ldquo;{review.executive_summary}&rdquo;
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="px-6 py-4 bg-slate-50 border-t flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-white transition-colors"
+          >
+            Go Back
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-5 py-2.5 rounded-xl bg-[#ef4444] text-white text-sm font-bold hover:bg-[#dc2626] transition-colors"
+          >
+            Proceed Anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TenderAnalysisPage() {
   const params = useParams();
   const router = useRouter();
@@ -66,6 +177,7 @@ export default function TenderAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [pendingViable, setPendingViable] = useState(false);
 
   useEffect(() => {
     if (!refId) return;
@@ -98,7 +210,7 @@ export default function TenderAnalysisPage() {
     }
   }
 
-  async function handleAction(stage: string, label: string) {
+  async function commitAction(stage: string, label: string) {
     if (!tender) return;
     setActionLoading(true);
     setActionMsg(null);
@@ -116,6 +228,14 @@ export default function TenderAnalysisPage() {
     } finally {
       setActionLoading(false);
     }
+  }
+
+  function handleAction(stage: string, label: string) {
+    if (stage === 'viable' && review?.risk_level === 'high') {
+      setPendingViable(true);
+      return;
+    }
+    commitAction(stage, label);
   }
 
   async function handleDiscard() {
@@ -150,6 +270,14 @@ export default function TenderAnalysisPage() {
 
   return (
     <main className="flex-1 flex flex-col overflow-hidden">
+      {pendingViable && review && tender && (
+        <RiskConfirmModal
+          review={review}
+          tenderTitle={tender.title}
+          onConfirm={() => { setPendingViable(false); commitAction('viable', 'Viable'); }}
+          onCancel={() => setPendingViable(false)}
+        />
+      )}
       <div className="flex-1 overflow-y-auto p-8">
         {/* Breadcrumb */}
         <div className="flex items-center gap-3 text-[12px] uppercase tracking-wide font-bold text-[#a1a9b8]">
@@ -187,9 +315,13 @@ export default function TenderAnalysisPage() {
                   </div>
 
                   {tender.description && (
-                    <p className="mt-6 text-[18px] leading-[1.8] text-slate-500 max-w-[700px]">
-                      {tender.description}
-                    </p>
+                    <div className="mt-6 max-w-[700px] space-y-4">
+                      {tender.description.split('\n\n').map((para, i) => (
+                        <p key={i} className="text-[18px] leading-[1.8] text-slate-500 whitespace-pre-line">
+                          {para}
+                        </p>
+                      ))}
+                    </div>
                   )}
                 </div>
 
@@ -230,7 +362,17 @@ export default function TenderAnalysisPage() {
 
               {!tender.scope && !tender.description && (
                 <p className="text-slate-400 text-sm italic">
-                  No detailed description available for this tender.
+                  No detailed description available.{' '}
+                  {tender.source_url && (
+                    <a
+                      href={tender.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#00236f] underline not-italic font-medium"
+                    >
+                      View full notice on Find a Tender →
+                    </a>
+                  )}
                 </p>
               )}
             </div>

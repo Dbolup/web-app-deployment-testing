@@ -16,6 +16,7 @@ from rest_framework import serializers as drf_serializers
 from accounts.models import TeamMember
 from tenders.models import Tender, TenderScore
 from pipeline.models import PipelineItem
+from ai_review.models import AIReview
 from tenders.serializers import TenderListSerializer
 from .models import Activity
 from .serializers import ActivitySerializer
@@ -79,12 +80,10 @@ def dashboard_stats(request):
     workspace = get_workspace(request.user)
 
     total_tenders = Tender.objects.count()
-    ai_qualified = PipelineItem.objects.filter(
+    ai_qualified = AIReview.objects.filter(
         workspace=workspace,
-        stage__in=[
-            PipelineItem.Stage.AI_QUALIFIED, PipelineItem.Stage.UNDER_REVIEW,
-            PipelineItem.Stage.IN_PROGRESS, PipelineItem.Stage.VIABLE,
-        ]
+        review_status=AIReview.ReviewStatus.COMPLETED,
+        recommendation__in=[AIReview.Recommendation.PURSUE, AIReview.Recommendation.REVIEW],
     ).count() if workspace else 0
     in_progress = PipelineItem.objects.filter(
         workspace=workspace, stage=PipelineItem.Stage.IN_PROGRESS
@@ -136,10 +135,15 @@ def top_tenders(request):
     limit = int(request.query_params.get('limit', 5))
 
     if workspace:
-        scored = TenderScore.objects.filter(workspace=workspace).order_by('-ai_score')[:limit]
-        tenders = [s.tender for s in scored]
+        reviews = (
+            AIReview.objects
+            .filter(workspace=workspace, review_status=AIReview.ReviewStatus.COMPLETED)
+            .select_related('tender')
+            .order_by('-ai_score')[:limit]
+        )
+        tenders = [r.tender for r in reviews]
     else:
-        tenders = Tender.objects.order_by('-created_at')[:limit]
+        tenders = list(Tender.objects.order_by('-created_at')[:limit])
 
     serializer = TenderListSerializer(tenders, many=True, context={'workspace': workspace, 'request': request})
     return Response(serializer.data)

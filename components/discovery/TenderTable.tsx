@@ -134,7 +134,7 @@ export default function TenderTable({ filters, onFilterChange, onPageChange }: P
   ).length;
 
   return (
-    <section className="flex-1 p-6 flex flex-col grow w-full min-w-0">
+    <section className="flex-1 p-6 flex flex-col overflow-y-auto min-w-0">
       <div className="pb-6">
         <h2 className="text-xl font-bold text-[#151c27]">Tender Discovery</h2>
         <div className="flex justify-between items-center">

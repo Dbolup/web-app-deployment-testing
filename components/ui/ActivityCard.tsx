@@ -40,41 +40,71 @@ function relativeTime(iso: string): string {
   return `${days} days ago`;
 }
 
-export default function ActivityCard({ activities }: { activities?: ActivityItem[] }) {
+function Skeleton() {
+  return (
+    <ul className="space-y-4">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <li key={i} className="flex items-start gap-3 animate-pulse">
+          <div className="w-8 h-8 rounded-lg bg-gray-100 flex-shrink-0" />
+          <div className="flex-1 space-y-2 pt-1">
+            <div className="h-3 bg-gray-100 rounded w-4/5" />
+            <div className="h-2 bg-gray-100 rounded w-1/3" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export default function ActivityCard({
+  activities,
+  loading,
+}: {
+  activities?: ActivityItem[];
+  loading?: boolean;
+}) {
   const items = activities ?? [];
 
   return (
-    <div className="bg-white p-6 rounded-xl border">
-      <h3 className="font-bold text-2xl text-[#00236f] mb-4">
+    <div className="bg-white p-6 rounded-xl border flex flex-col h-full">
+      <h3 className="font-bold text-2xl text-[#00236f] mb-4 flex-shrink-0">
         Recent Activity
       </h3>
 
-      {items.length === 0 ? (
-        <p className="text-sm text-slate-400 text-center py-8">No activity yet.</p>
-      ) : (
-        <ul className="space-y-10">
-          {items.map((item) => {
-            const style = activityStyles[item.activity_type] ?? activityStyles.system;
-            return (
-              <li key={item.id} className="flex items-start gap-3">
-                <div className={`p-2 rounded-lg ${style.bg} ${style.text}`}>
-                  {style.icon}
-                </div>
-                <div>
-                  <p className="text-base text-gray-700 w-50">
-                    {item.prefix}{" "}
-                    <span className="font-bold">{item.highlight}</span>
-                  </p>
-                  <p className="text-sm text-gray-500">{relativeTime(item.created_at)}</p>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <div className="flex-1 overflow-y-auto max-h-72 pr-1">
+        {loading ? (
+          <Skeleton />
+        ) : items.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-8">
+            No activity yet. Actions on tenders will appear here.
+          </p>
+        ) : (
+          <ul className="space-y-4">
+            {items.map((item) => {
+              const style = activityStyles[item.activity_type] ?? activityStyles.system;
+              return (
+                <li key={item.id} className="flex items-start gap-3">
+                  <div className={`p-2 rounded-lg ${style.bg} ${style.text} flex-shrink-0`}>
+                    {style.icon}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-700 leading-snug">
+                      {item.prefix}{" "}
+                      <span className="font-bold">{item.highlight}</span>
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {relativeTime(item.created_at)}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
 
-      <div className="flex justify-center">
-        <button className="text-[#173c77] text-base mt-5 text-center font-semibold">
+      <div className="flex justify-center mt-4 pt-3 border-t flex-shrink-0">
+        <button className="text-[#173c77] text-sm font-semibold hover:underline">
           View All Activity
         </button>
       </div>

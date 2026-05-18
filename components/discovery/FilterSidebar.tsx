@@ -30,7 +30,7 @@ export default function FilterSidebar({ filters, onFilterChange }: Props) {
   const budgetMax = filters.budget_max ? Number(filters.budget_max) : 5000000;
 
   return (
-    <aside className="w-72 bg-white p-6 border-r border-slate-200 overflow-y-auto h-screen shrink-0">
+    <aside className="w-72 bg-white p-6 border-r border-slate-200 overflow-y-auto h-full shrink-0">
       <div className="flex items-center justify-between mb-8">
         <h2 className="text-[11px] font-bold text-[#151c27] uppercase tracking-widest">
           Active Filters

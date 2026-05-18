@@ -296,6 +296,47 @@ def _get_industry(release: dict) -> str:
     return release.get("tender", {}).get("mainProcurementCategory", "")
 
 
+def _get_description(release: dict) -> str:
+    """
+    Main tender description.
+
+    Find a Tender often leaves tender.description empty and puts the real
+    content in tender.lots[].description (one per lot).  We fall back to
+    joining those when the top-level field is absent.
+    """
+    tender = release.get("tender", {})
+    desc = (tender.get("description") or "").strip()
+    if desc:
+        return desc
+
+    lots = tender.get("lots", [])
+    parts: list[str] = []
+    for lot in lots:
+        lot_desc = (lot.get("description") or "").strip()
+        if not lot_desc:
+            continue
+        lot_title = (lot.get("title") or "").strip()
+        if lot_title:
+            parts.append(f"{lot_title}\n{lot_desc}")
+        else:
+            parts.append(lot_desc)
+    return "\n\n".join(parts)
+
+
+def _get_scope(release: dict) -> str:
+    """
+    Procurement scope / rationale.
+
+    Uses planning.rationale when present; otherwise summarises lot titles.
+    """
+    rationale = (release.get("planning", {}).get("rationale") or "").strip()
+    if rationale:
+        return rationale
+    lots = release.get("tender", {}).get("lots", [])
+    titles = [lot.get("title", "").strip() for lot in lots if lot.get("title")]
+    return "; ".join(titles) if titles else ""
+
+
 def _all_documents(release: dict) -> list[dict]:
     """
     Yield every document object in the release, regardless of which object
@@ -461,7 +502,8 @@ def parse_release(release: dict) -> dict | None:
         "title": title,
         "organization": _get_buyer(release),
         "department": _get_department(release),
-        "description": tender.get("description", "").strip(),
+        "description": _get_description(release),
+        "scope": _get_scope(release),
         "budget_min": budget_min,
         "budget_max": budget_max,
         "budget_display": budget_display,
