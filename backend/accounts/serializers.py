@@ -89,7 +89,7 @@ class InvitationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invitation
         fields = ['id', 'email', 'role', 'token', 'created_at', 'expires_at', 'accepted']
-        read_only_fields = ['id', 'token', 'created_at', 'accepted']
+        read_only_fields = ['id', 'token', 'created_at', 'expires_at', 'accepted']
 
     def create(self, validated_data):
         validated_data['expires_at'] = timezone.now() + timezone.timedelta(days=7)

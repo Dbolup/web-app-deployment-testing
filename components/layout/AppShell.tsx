@@ -3,7 +3,7 @@ import { usePathname } from "next/navigation";
 import Sidebar from "@/components/ui/Sidebar";
 import Header from "@/components/ui/Header";
 
-const AUTH_PATHS = ["/login", "/register", "/onboarding"];
+const AUTH_PATHS = ["/login", "/register", "/onboarding", "/accept-invite"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

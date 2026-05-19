@@ -137,10 +137,11 @@ class StartProcessingView(generics.GenericAPIView):
     queryset = Document.objects.none()
 
     def post(self, request, pk):
+        from .tasks import process_document_task
         workspace = get_workspace(request.user)
         doc = generics.get_object_or_404(Document, pk=pk, workspace=workspace)
 
-        if doc.status not in [Document.Status.UPLOADED, Document.Status.FAILED]:
+        if doc.status not in [Document.Status.UPLOADED, Document.Status.FAILED, Document.Status.PROCESSING]:
             return Response(
                 {'detail': f'Document is already {doc.status}'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -150,6 +151,10 @@ class StartProcessingView(generics.GenericAPIView):
         doc.processing_progress = 0
         doc.save(update_fields=['status', 'processing_progress'])
 
+        process_document_task.enqueue(document_id=doc.id)
+
+        # With ImmediateBackend the task runs synchronously above; refresh to get final state.
+        doc.refresh_from_db()
         return Response(DocumentSerializer(doc).data)
 
 

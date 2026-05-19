@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { MdOutlineAccountTree } from "react-icons/md";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
@@ -8,6 +8,9 @@ import { login, setTokens, getAccessToken } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextUrl = searchParams.get("next") ?? "/dashboard";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -15,8 +18,8 @@ export default function LoginPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (getAccessToken()) router.replace("/dashboard");
-  }, [router]);
+    if (getAccessToken()) router.replace(nextUrl);
+  }, [router, nextUrl]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -25,7 +28,7 @@ export default function LoginPage() {
     try {
       const tokens = await login(email, password);
       setTokens(tokens.access, tokens.refresh);
-      router.replace("/dashboard");
+      router.replace(nextUrl);
     } catch (err: any) {
       setError(err.message ?? "Login failed");
     } finally {

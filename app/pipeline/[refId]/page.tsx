@@ -18,6 +18,7 @@ import {
   movePipelineItem,
   addToPipeline,
   removePipelineItem,
+  sendReviewEmail,
   TenderDetail,
   AIReviewData,
   BackendPipelineItem,
@@ -161,6 +162,134 @@ function RiskConfirmModal({
   );
 }
 
+function EmailReviewModal({
+  tenderTitle,
+  onSend,
+  onCancel,
+}: {
+  tenderTitle: string;
+  onSend: (emails: string[]) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [input, setInput] = useState('');
+  const [chips, setChips] = useState<string[]>([]);
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function addChip(raw: string) {
+    const trimmed = raw.trim().replace(/,+$/, '');
+    if (!trimmed) return;
+    const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    if (!valid) { setErr(`"${trimmed}" is not a valid email address`); return; }
+    if (!chips.includes(trimmed)) setChips((prev) => [...prev, trimmed]);
+    setInput('');
+    setErr(null);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addChip(input);
+    }
+    if (e.key === 'Backspace' && input === '' && chips.length > 0) {
+      setChips((prev) => prev.slice(0, -1));
+    }
+  }
+
+  async function handleSend() {
+    const remaining = input.trim().replace(/,+$/, '');
+    const all = remaining ? [...chips, remaining] : [...chips];
+    if (all.length === 0) { setErr('Add at least one email address'); return; }
+    if (remaining) {
+      const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(remaining);
+      if (!valid) { setErr(`"${remaining}" is not a valid email address`); return; }
+    }
+    setSending(true);
+    setErr(null);
+    try {
+      await onSend(all);
+    } catch (e: any) {
+      setErr(e.message ?? 'Failed to send');
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+        <div className="bg-[#f0f4ff] border-b border-[#dce2f3] px-6 py-5 flex items-start gap-4">
+          <Share2 className="h-6 w-6 text-[#00236f] shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-[#00236f] mb-1">Send for Review</p>
+            <h2 className="text-base font-bold text-[#151c27] leading-snug">{tenderTitle}</h2>
+          </div>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">
+              Recipient email addresses
+            </label>
+            <div
+              className="min-h-[46px] flex flex-wrap gap-2 items-center border border-slate-200 rounded-xl px-3 py-2 focus-within:border-[#00236f] focus-within:ring-1 focus-within:ring-[#00236f] cursor-text"
+              onClick={() => document.getElementById('email-chip-input')?.focus()}
+            >
+              {chips.map((email) => (
+                <span key={email} className="flex items-center gap-1 bg-[#e8edf8] text-[#00236f] text-sm font-medium rounded-lg px-2.5 py-1">
+                  {email}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setChips((p) => p.filter((c) => c !== email)); }}
+                    className="text-[#00236f]/60 hover:text-[#ef4444] leading-none"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                id="email-chip-input"
+                type="email"
+                value={input}
+                onChange={(e) => { setInput(e.target.value); setErr(null); }}
+                onKeyDown={handleKeyDown}
+                onBlur={() => addChip(input)}
+                placeholder={chips.length === 0 ? 'name@company.com, press Enter to add' : ''}
+                className="flex-1 min-w-[180px] text-sm outline-none bg-transparent placeholder:text-slate-400"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-slate-400">Press Enter or comma after each address to add it.</p>
+          </div>
+
+          <div className="bg-[#eff6ff] rounded-xl px-4 py-3 text-sm text-[#1e3a5f]">
+            The AI review (score, recommendation, risk level, executive summary, and capability alignment) will be included in the email.
+          </div>
+
+          {err && <p className="text-sm text-[#ef4444]">{err}</p>}
+        </div>
+
+        <div className="px-6 py-4 bg-slate-50 border-t flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            disabled={sending}
+            className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-white transition-colors disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSend}
+            disabled={sending || (chips.length === 0 && !input.trim())}
+            className="px-5 py-2.5 rounded-xl bg-[#233f97] text-white text-sm font-bold hover:bg-[#173b8f] transition-colors disabled:opacity-60 flex items-center gap-2"
+          >
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+            {sending ? 'Sending…' : 'Send Email'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TenderAnalysisPage() {
   const params = useParams();
   const router = useRouter();
@@ -178,6 +307,7 @@ export default function TenderAnalysisPage() {
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [pendingViable, setPendingViable] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
 
   useEffect(() => {
     if (!refId) return;
@@ -268,6 +398,12 @@ export default function TenderAnalysisPage() {
   const riskStyle = review?.risk_level ? RISK_COLORS[review.risk_level] : null;
   const recStyle = review?.recommendation ? RECOMMENDATION_LABELS[review.recommendation] : null;
 
+  async function handleSendReviewEmail(emails: string[]) {
+    await sendReviewEmail(refId, emails);
+    setShowEmailModal(false);
+    setActionMsg('Review email sent successfully');
+  }
+
   return (
     <main className="flex-1 flex flex-col overflow-hidden">
       {pendingViable && review && tender && (
@@ -276,6 +412,13 @@ export default function TenderAnalysisPage() {
           tenderTitle={tender.title}
           onConfirm={() => { setPendingViable(false); commitAction('viable', 'Viable'); }}
           onCancel={() => setPendingViable(false)}
+        />
+      )}
+      {showEmailModal && tender && (
+        <EmailReviewModal
+          tenderTitle={tender.title}
+          onSend={handleSendReviewEmail}
+          onCancel={() => setShowEmailModal(false)}
         />
       )}
       <div className="flex-1 overflow-y-auto p-8">
@@ -530,8 +673,8 @@ export default function TenderAnalysisPage() {
               </button>
               <div className="grid grid-cols-2 gap-4">
                 <button
-                  disabled={actionLoading}
-                  onClick={() => handleAction('under_review', 'Under Review')}
+                  disabled={actionLoading || !review}
+                  onClick={() => setShowEmailModal(true)}
                   className="h-14 rounded-xl border border-[#dce2f3] text-slate-600 font-semibold hover:bg-slate-50 transition-colors disabled:opacity-60"
                 >
                   Send for Review

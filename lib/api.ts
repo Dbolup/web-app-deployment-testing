@@ -153,6 +153,49 @@ export async function removeTeamMember(id: number): Promise<void> {
   if (!res.ok) throw new Error('Failed to remove member');
 }
 
+export interface PendingInvitation {
+  id: number;
+  email: string;
+  role: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export async function getPendingInvitations(): Promise<PendingInvitation[]> {
+  const res = await apiFetch('/api/auth/invite/pending/');
+  if (!res.ok) throw new Error('Failed to load invitations');
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data.results ?? []);
+}
+
+export async function cancelInvitation(id: number): Promise<void> {
+  const res = await apiFetch(`/api/auth/invite/${id}/`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to cancel invitation');
+}
+
+export interface InvitePreview {
+  workspace_name: string;
+  role: string;
+  email: string;
+}
+
+export async function getInvitePreview(token: string): Promise<InvitePreview> {
+  const res = await apiFetch(`/api/auth/invite/accept/${token}/`, { method: 'GET' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? 'Invalid or expired invitation');
+  }
+  return res.json();
+}
+
+export async function acceptInvite(token: string): Promise<void> {
+  const res = await apiFetch(`/api/auth/invite/accept/${token}/`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? 'Failed to accept invitation');
+  }
+}
+
 export async function getIntegrations(): Promise<Integration[]> {
   const res = await apiFetch('/api/integrations/');
   if (!res.ok) throw new Error('Failed to load integrations');
@@ -596,4 +639,106 @@ export async function addToPipeline(tender_id: number, stage = 'new'): Promise<B
 export async function removePipelineItem(id: number): Promise<void> {
   const res = await apiFetch(`/api/pipeline/${id}/`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to remove from pipeline');
+}
+
+export async function sendReviewEmail(refId: string, emails: string[]): Promise<void> {
+  const res = await apiFetch('/api/pipeline/send-review-email/', {
+    method: 'POST',
+    body: JSON.stringify({ ref_id: refId, emails }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? 'Failed to send email');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+export interface ExtractedSection {
+  id: number;
+  section_type: 'scope_of_work' | 'deliverables' | 'evaluation_criteria' | 'timeline' | 'requirements' | 'other';
+  title: string;
+  content: unknown;
+  accuracy_score: number;
+  ai_verified: boolean;
+  created_at: string;
+}
+
+export interface Doc {
+  id: number;
+  tender: number | null;
+  filename: string;
+  file: string;
+  file_size: number;
+  file_size_display: string;
+  mime_type: string;
+  status: 'uploaded' | 'processing' | 'processed' | 'failed';
+  processing_progress: number;
+  pages_count: number;
+  sections: ExtractedSection[];
+  created_at: string;
+  updated_at: string;
+}
+
+async function apiFetchUpload(path: string, formData: FormData): Promise<Response> {
+  let token = getAccessToken();
+  const doFetch = (t: string | null) =>
+    fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: t ? { Authorization: `Bearer ${t}` } : {},
+      body: formData,
+    });
+  let res = await doFetch(token);
+  if (res.status === 401) {
+    token = await refreshAccessToken();
+    if (token) res = await doFetch(token);
+  }
+  return res;
+}
+
+export async function listDocuments(): Promise<Doc[]> {
+  const res = await apiFetch('/api/documents/');
+  if (!res.ok) throw new Error('Failed to load documents');
+  const data = await res.json();
+  return Array.isArray(data) ? data : (data.results ?? []);
+}
+
+export async function uploadDocument(file: File, tenderId?: number): Promise<Doc> {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (tenderId) fd.append('tender', String(tenderId));
+  const res = await apiFetchUpload('/api/documents/upload/', fd);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? 'Upload failed');
+  }
+  return res.json();
+}
+
+export async function processDocument(id: number): Promise<Doc> {
+  const res = await apiFetch(`/api/documents/${id}/process/`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? 'Failed to start processing');
+  }
+  return res.json();
+}
+
+export async function getDocument(id: number): Promise<Doc> {
+  const res = await apiFetch(`/api/documents/${id}/`);
+  if (!res.ok) throw new Error('Failed to load document');
+  return res.json();
+}
+
+export async function getDocumentSections(id: number): Promise<ExtractedSection[]> {
+  const res = await apiFetch(`/api/documents/${id}/sections/`);
+  if (!res.ok) throw new Error('Failed to load sections');
+  return res.json();
+}
+
+export async function deleteDocument(id: number): Promise<void> {
+  const res = await apiFetch(`/api/documents/${id}/`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete document');
 }

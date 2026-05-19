@@ -8,7 +8,9 @@ import TenderCard from "../../components/ui/TenderCard";
 import Button from "@/components/ui/Button";
 import {
   getDashboardStats,
-  getTopTenders,
+  fetchAISuggestions,
+  getPipelineKanban,
+  suggestionToTender,
   getActivity,
   getMe,
   DashboardStats,
@@ -54,14 +56,18 @@ export default function Dashboard() {
     Promise.all([
       getDashboardStats(30),
       getDashboardStats(90),
-      getTopTenders(3),
+      fetchAISuggestions(100, 'pursue,review,skip'),
+      getPipelineKanban(),
       getActivity(),
       getMe(),
     ])
-      .then(([s30, s90, tenders, acts, me]) => {
-        setStats(s30);
-        setStats90(s90);
-        setTopTenders(tenders);
+      .then(([s30, s90, suggestions, kanban, acts, me]) => {
+        const aiQualified = suggestions.length;
+        const inProgress = kanban.find((c) => c.stage === 'in_progress')?.count ?? 0;
+        const submitted = kanban.find((c) => c.stage === 'submitted')?.count ?? 0;
+        setStats({ ...s30, ai_qualified: aiQualified, in_progress: inProgress, submitted: submitted });
+        setStats90({ ...s90, ai_qualified: aiQualified, in_progress: inProgress, submitted: submitted });
+        setTopTenders(suggestions.slice(0, 6).map(suggestionToTender));
         setActivities(acts);
         setUserName(me.first_name || me.full_name?.split(' ')[0] || '');
       })
@@ -198,7 +204,7 @@ export default function Dashboard() {
 
           <div className="grid grid-cols-3 gap-6">
             {loading
-              ? Array.from({ length: 3 }).map((_, i) => (
+              ? Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="bg-white p-10 rounded-xl border border-gray-300 animate-pulse h-52" />
                 ))
               : topTenders.length === 0

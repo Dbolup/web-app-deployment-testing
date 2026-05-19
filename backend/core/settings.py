@@ -93,6 +93,28 @@ MEDIA_ROOT = BASE_DIR / os.getenv('MEDIA_ROOT', 'media')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+APP_URL = os.getenv('APP_URL', 'http://localhost:3005')
+
+# Background tasks (Django 6.0 built-in tasks)
+TASKS = {
+    "default": {
+        "BACKEND": os.getenv(
+            "DJANGO_TASKS_BACKEND",
+            "django.tasks.backends.immediate.ImmediateBackend",
+        ),
+    }
+}
+
+# Email
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'False') == 'True'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@tenderflow.ai')
+
 # CORS
 CORS_ALLOWED_ORIGINS = os.getenv(
     'CORS_ALLOWED_ORIGINS',

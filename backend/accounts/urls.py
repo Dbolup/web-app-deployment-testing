@@ -41,5 +41,7 @@ urlpatterns = [
     path('team/', views.TeamMemberListView.as_view(), name='team_list'),
     path('team/<int:pk>/', views.TeamMemberDetailView.as_view(), name='team_detail'),
     path('invite/', views.InvitationView.as_view(), name='invite'),
+    path('invite/pending/', views.PendingInvitationsView.as_view(), name='invite_pending'),
+    path('invite/<int:pk>/', views.InvitationDetailView.as_view(), name='invite_detail'),
     path('invite/accept/<uuid:token>/', views.AcceptInvitationView.as_view(), name='accept_invitation'),
 ]

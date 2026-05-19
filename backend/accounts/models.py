@@ -76,9 +76,9 @@ class Workspace(models.Model):
 
 class TeamMember(models.Model):
     class Role(models.TextChoices):
-        SUPER_ADMIN = 'super_admin', 'Super Admin'
+        ADMIN = 'admin', 'Admin'
         REVIEWER = 'reviewer', 'Reviewer'
-        EDITOR = 'editor', 'Editor'
+        MEMBER = 'member', 'Member'
 
     class Status(models.TextChoices):
         ACTIVE = 'active', 'Active'
@@ -86,7 +86,7 @@ class TeamMember(models.Model):
 
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='members')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='team_memberships')
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.EDITOR)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.MEMBER)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     invited_at = models.DateTimeField(auto_now_add=True)
 
@@ -101,7 +101,7 @@ class Invitation(models.Model):
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='invitations')
     email = models.EmailField()
     role = models.CharField(
-        max_length=20, choices=TeamMember.Role.choices, default=TeamMember.Role.EDITOR
+        max_length=20, choices=TeamMember.Role.choices, default=TeamMember.Role.MEMBER
     )
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -16,6 +16,7 @@ from .serializers import (
     WorkspaceSerializer, TeamMemberSerializer, InvitationSerializer,
     PasswordChangeSerializer,
 )
+from .tasks import send_invite_email
 
 _AUTH_TAG = 'Auth'
 
@@ -297,7 +298,16 @@ class InvitationView(generics.CreateAPIView):
         return membership.workspace
 
     def perform_create(self, serializer):
-        serializer.save(workspace=self._get_workspace())
+        workspace = self._get_workspace()
+        invitation = serializer.save(workspace=workspace)
+        invited_by = self.request.user.get_full_name() or self.request.user.email
+        send_invite_email.enqueue(
+            email=invitation.email,
+            workspace_name=workspace.name,
+            role=invitation.role,
+            token=str(invitation.token),
+            invited_by=invited_by,
+        )
 
 
 _detail_serializer = inline_serializer(
@@ -333,14 +343,29 @@ class AcceptInvitationView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     queryset = Invitation.objects.none()
 
-    def post(self, request, token):
+    def _get_valid_invitation(self, token):
         try:
-            invitation = Invitation.objects.get(token=token, accepted=False)
+            invitation = Invitation.objects.select_related('workspace').get(token=token, accepted=False)
         except Invitation.DoesNotExist:
-            return Response({'detail': 'Invalid or expired invitation'}, status=status.HTTP_400_BAD_REQUEST)
-
+            return None, Response({'detail': 'Invalid or expired invitation'}, status=status.HTTP_400_BAD_REQUEST)
         if invitation.expires_at < timezone.now():
-            return Response({'detail': 'Invitation has expired'}, status=status.HTTP_400_BAD_REQUEST)
+            return None, Response({'detail': 'Invitation has expired'}, status=status.HTTP_400_BAD_REQUEST)
+        return invitation, None
+
+    def get(self, request, token):
+        invitation, err = self._get_valid_invitation(token)
+        if err:
+            return err
+        return Response({
+            'workspace_name': invitation.workspace.name,
+            'role': invitation.role,
+            'email': invitation.email,
+        })
+
+    def post(self, request, token):
+        invitation, err = self._get_valid_invitation(token)
+        if err:
+            return err
 
         if not request.user.is_authenticated:
             return Response({'detail': 'Authentication required to accept invitation'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -353,3 +378,41 @@ class AcceptInvitationView(generics.GenericAPIView):
         invitation.accepted = True
         invitation.save()
         return Response({'detail': 'Invitation accepted'})
+
+
+@extend_schema(
+    tags=[_AUTH_TAG],
+    summary='List pending invitations',
+    description='Returns all non-accepted, non-expired invitations for the workspace.',
+    responses={200: InvitationSerializer(many=True)},
+)
+class PendingInvitationsView(generics.ListAPIView):
+    serializer_class = InvitationSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Invitation.objects.none()
+        membership = self.request.user.team_memberships.filter(status=TeamMember.Status.ACTIVE).first()
+        if not membership:
+            return Invitation.objects.none()
+        return Invitation.objects.filter(
+            workspace=membership.workspace,
+            accepted=False,
+            expires_at__gt=timezone.now(),
+        ).order_by('-created_at')
+
+
+@extend_schema(
+    tags=[_AUTH_TAG],
+    summary='Cancel invitation',
+    description='Deletes a pending invitation so the link can no longer be used.',
+    responses={204: OpenApiResponse(description='Invitation cancelled')},
+)
+class InvitationDetailView(generics.DestroyAPIView):
+    serializer_class = InvitationSerializer
+
+    def get_queryset(self):
+        membership = self.request.user.team_memberships.filter(status=TeamMember.Status.ACTIVE).first()
+        if not membership:
+            return Invitation.objects.none()
+        return Invitation.objects.filter(workspace=membership.workspace, accepted=False)

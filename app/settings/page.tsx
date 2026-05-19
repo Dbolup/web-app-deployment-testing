@@ -14,10 +14,11 @@ import {
   getMe, updateMe,
   getWorkspace, updateWorkspace,
   getTeamMembers, inviteUser, removeTeamMember,
+  getPendingInvitations, cancelInvitation,
   getIntegrations, disconnectIntegration,
   changePassword, clearTokens,
   getCompanyProfile, saveCompanyProfile,
-  UserProfile, WorkspaceSettings, TeamMember, Integration, CompanyProfilePayload,
+  UserProfile, WorkspaceSettings, TeamMember, PendingInvitation, Integration, CompanyProfilePayload,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
@@ -49,11 +50,14 @@ const SENSITIVITY_VALUES = { strict: 16, balanced: 50, broad: 84 } as const;
 const SENSITIVITY_FROM_SLIDER = (v: number) => v < 34 ? 'strict' : v > 66 ? 'broad' : 'balanced';
 
 const ROLE_LABEL: Record<string, string> = {
-  super_admin: 'Super Admin', reviewer: 'Reviewer', editor: 'Editor',
+  admin: 'Admin', reviewer: 'Reviewer', member: 'Member',
+  super_admin: 'Admin', editor: 'Member',
 };
 const ROLE_COLORS: Record<string, string> = {
+  admin: 'bg-[#1e3a8a] text-white',
   super_admin: 'bg-[#1e3a8a] text-white',
   reviewer: 'bg-[#6df5e1] text-[#006b5f]',
+  member: 'bg-[#e7eefe] text-[#757682]',
   editor: 'bg-[#e7eefe] text-[#757682]',
 };
 const STATUS_BADGE: Record<string, string> = {
@@ -174,6 +178,7 @@ export default function SettingsPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceSettings | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvitation[]>([]);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loadError, setLoadError] = useState("");
 
@@ -204,7 +209,7 @@ export default function SettingsPage() {
   // Invite modal
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("reviewer");
+  const [inviteRole, setInviteRole] = useState("member");
   const [inviteSave, setInviteSave] = useState<SaveState>('idle');
 
   // Password modal
@@ -221,14 +226,15 @@ export default function SettingsPage() {
 
   // ── Load all data ──────────────────────────────────────────────────────────
   useEffect(() => {
-    Promise.all([getMe(), getWorkspace(), getTeamMembers(), getIntegrations(), getCompanyProfile()])
-      .then(([u, ws, team, intgs, cp]) => {
+    Promise.all([getMe(), getWorkspace(), getTeamMembers(), getPendingInvitations(), getIntegrations(), getCompanyProfile()])
+      .then(([u, ws, team, invites, intgs, cp]) => {
         setUser(u);
         setWorkspace(ws);
         setWorkspaceName(ws.name);
         setSensitivity(SENSITIVITY_VALUES[ws.ai_sensitivity]);
         setKeywords(ws.keywords ?? []);
         setMembers(team);
+        setPendingInvites(invites);
         setIntegrations(intgs);
         if (cp) {
           setCpExists(true);
@@ -308,11 +314,19 @@ export default function SettingsPage() {
   async function handleInvite() {
     flash(setInviteSave, async () => {
       await inviteUser(inviteEmail, inviteRole);
-      const team = await getTeamMembers();
+      const [team, invites] = await Promise.all([getTeamMembers(), getPendingInvitations()]);
       setMembers(team);
+      setPendingInvites(invites);
       setShowInvite(false);
       setInviteEmail("");
     });
+  }
+
+  async function handleCancelInvite(id: number) {
+    try {
+      await cancelInvitation(id);
+      setPendingInvites(prev => prev.filter(i => i.id !== id));
+    } catch { /* ignore */ }
   }
 
   async function handleRemoveMember(id: number) {
@@ -761,7 +775,7 @@ export default function SettingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {members.length === 0 && !loadError
+                {members.length === 0 && pendingInvites.length === 0 && !loadError
                   ? Array.from({ length: 3 }).map((_, i) => (
                     <tr key={i} className="border-t border-slate-100">
                       <td className="px-6 py-4"><Skeleton className="h-4 w-40" /></td>
@@ -770,51 +784,86 @@ export default function SettingsPage() {
                       <td className="px-6 py-4" />
                     </tr>
                   ))
-                  : members.map(member => (
-                    <tr key={member.id} className="border-t border-slate-100">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className={`flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold shrink-0 ${ROLE_COLORS[member.role] ?? 'bg-slate-100 text-slate-600'}`}>
-                            {member.user.first_name[0]}{member.user.last_name[0]}
-                          </div>
-                          <div>
-                            <p className="font-semibold text-[#00236f] text-sm">{member.user.full_name}</p>
-                            <p className="text-xs text-[#757682]">{member.user.email}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`text-[12px] px-2 py-0.5 rounded font-semibold ${ROLE_COLORS[member.role] ?? 'bg-slate-100 text-slate-500'}`}>
-                          {ROLE_LABEL[member.role] ?? member.role}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`text-sm capitalize ${STATUS_BADGE[member.status] ?? ''}`}>
-                          {member.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex justify-end relative">
-                          <button
-                            onClick={() => setOpenMemberMenu(openMemberMenu === member.id ? null : member.id)}
-                            className="text-[#757682] hover:text-[#00236f] transition-colors"
-                          >
-                            <MoreVertical size={18} />
-                          </button>
-                          {openMemberMenu === member.id && (
-                            <div className="absolute right-0 top-8 z-20 w-40 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
-                              <button
-                                onClick={() => handleRemoveMember(member.id)}
-                                className="w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
-                              >
-                                Remove member
-                              </button>
+                  : <>
+                    {members.map(member => (
+                      <tr key={member.id} className="border-t border-slate-100">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className={`flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold shrink-0 ${ROLE_COLORS[member.role] ?? 'bg-slate-100 text-slate-600'}`}>
+                              {member.user.first_name[0]}{member.user.last_name[0]}
                             </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                            <div>
+                              <p className="font-semibold text-[#00236f] text-sm">{member.user.full_name}</p>
+                              <p className="text-xs text-[#757682]">{member.user.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-[12px] px-2 py-0.5 rounded font-semibold ${ROLE_COLORS[member.role] ?? 'bg-slate-100 text-slate-500'}`}>
+                            {ROLE_LABEL[member.role] ?? member.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-sm capitalize ${STATUS_BADGE[member.status] ?? ''}`}>
+                            {member.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-end relative">
+                            <button
+                              onClick={() => setOpenMemberMenu(openMemberMenu === member.id ? null : member.id)}
+                              className="text-[#757682] hover:text-[#00236f] transition-colors"
+                            >
+                              <MoreVertical size={18} />
+                            </button>
+                            {openMemberMenu === member.id && (
+                              <div className="absolute right-0 top-8 z-20 w-40 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                                <button
+                                  onClick={() => handleRemoveMember(member.id)}
+                                  className="w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
+                                >
+                                  Remove member
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {pendingInvites.map(invite => (
+                      <tr key={`inv-${invite.id}`} className="border-t border-slate-100 bg-slate-50/50">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold shrink-0 bg-slate-100 text-slate-400">
+                              ?
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-500 text-sm">{invite.email}</p>
+                              <p className="text-xs text-slate-400">Invitation pending</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-[12px] px-2 py-0.5 rounded font-semibold ${ROLE_COLORS[invite.role] ?? 'bg-slate-100 text-slate-500'}`}>
+                            {ROLE_LABEL[invite.role] ?? invite.role}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-sm text-amber-500 font-semibold">Invited</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex justify-end">
+                            <button
+                              onClick={() => handleCancelInvite(invite.id)}
+                              className="text-xs text-slate-400 hover:text-red-600 transition-colors font-semibold"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </>
                 }
               </tbody>
             </table>
@@ -873,9 +922,9 @@ export default function SettingsPage() {
                   onChange={e => setInviteRole(e.target.value)}
                   className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#00236f]/20 focus:border-[#00236f] outline-none"
                 >
+                  <option value="member">Member</option>
                   <option value="reviewer">Reviewer</option>
-                  <option value="editor">Editor</option>
-                  <option value="super_admin">Super Admin</option>
+                  <option value="admin">Admin</option>
                 </select>
               </div>
             </div>

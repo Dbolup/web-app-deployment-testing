@@ -1,4 +1,4 @@
-from rest_framework import generics, status
+from rest_framework import generics, status, serializers as drf_serializers
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -9,8 +9,11 @@ from drf_spectacular.utils import (
 from drf_spectacular.types import OpenApiTypes
 
 from accounts.models import TeamMember
+from tenders.models import Tender
+from ai_review.models import AIReview
 from .models import PipelineItem, StageHistory
 from .serializers import PipelineItemSerializer, PipelineItemMoveSerializer, PipelineKanbanSerializer
+from .tasks import send_tender_review_email
 
 _TAG = 'Pipeline'
 
@@ -216,3 +219,49 @@ def pipeline_kanban(request):
         })
 
     return Response(result)
+
+
+@extend_schema(
+    tags=[_TAG],
+    summary='Send tender review by email',
+    description='Enqueues a background task to email the AI review for a tender to one or more recipients. Returns immediately.',
+    request=inline_serializer(
+        name='SendReviewEmailRequest',
+        fields={
+            'ref_id': drf_serializers.CharField(),
+            'emails': drf_serializers.ListField(child=drf_serializers.EmailField()),
+        },
+    ),
+    responses={202: inline_serializer(name='SendReviewEmailResponse', fields={'queued': drf_serializers.BooleanField()})},
+)
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_review_email(request):
+    workspace = get_workspace(request.user)
+    ref_id = request.data.get('ref_id', '').strip()
+    emails = request.data.get('emails', [])
+
+    if not ref_id:
+        return Response({'error': 'ref_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if not emails:
+        return Response({'error': 'At least one email address is required'}, status=status.HTTP_400_BAD_REQUEST)
+    if not workspace:
+        return Response({'error': 'No active workspace'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Validate the tender and review exist before queuing
+    tender = generics.get_object_or_404(Tender, ref_id=ref_id)
+    has_review = AIReview.objects.filter(
+        workspace=workspace, tender=tender, review_status=AIReview.ReviewStatus.COMPLETED
+    ).exists()
+    if not has_review:
+        return Response({'error': 'No completed AI review found for this tender'}, status=status.HTTP_404_NOT_FOUND)
+
+    sender_name = request.user.get_full_name() or request.user.email
+    send_tender_review_email.enqueue(
+        ref_id=ref_id,
+        workspace_id=workspace.id,
+        emails=list(emails),
+        sender_name=sender_name,
+    )
+
+    return Response({'queued': True}, status=status.HTTP_202_ACCEPTED)
