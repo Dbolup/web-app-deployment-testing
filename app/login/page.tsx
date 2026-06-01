@@ -1,15 +1,16 @@
 "use client";
-import { useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { MdOutlineAccountTree } from "react-icons/md";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import { login, setTokens, getAccessToken } from "@/lib/api";
 
-export default function LoginPage() {
-  const router = useRouter();
+function LoginForm() {
   const searchParams = useSearchParams();
-  const nextUrl = searchParams.get("next") ?? "/dashboard";
+  // Ignore "/" (the bare root, which only redirects here) so we land on the app.
+  const next = searchParams.get("next");
+  const nextUrl = next && next !== "/" ? next : "/dashboard";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -18,8 +19,10 @@ export default function LoginPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (getAccessToken()) router.replace(nextUrl);
-  }, [router, nextUrl]);
+    // Hard navigation: ensures the middleware sees the auth cookie instead of
+    // replaying a pre-login prefetch that bounces back to /login.
+    if (getAccessToken()) window.location.assign(nextUrl);
+  }, [nextUrl]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -28,7 +31,10 @@ export default function LoginPage() {
     try {
       const tokens = await login(email, password);
       setTokens(tokens.access, tokens.refresh);
-      router.replace(nextUrl);
+      // Full-page navigation so the just-set cookie is present when the
+      // middleware gates /dashboard; a soft router.replace() can silently
+      // resolve from the cached pre-login redirect and appear to do nothing.
+      window.location.assign(nextUrl);
     } catch (err: any) {
       setError(err.message ?? "Login failed");
     } finally {
@@ -186,5 +192,14 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // useSearchParams() requires a Suspense boundary for the production build/prerender.
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#F5F7FB]" />}>
+      <LoginForm />
+    </Suspense>
   );
 }

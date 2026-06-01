@@ -434,7 +434,8 @@ export default function OnboardingPage() {
         preferred_notice_types: profile.preferred_notice_types,
         onboarding_completed: true,
       });
-      router.replace("/dashboard");
+      // Hard navigation so the middleware sees the auth cookie (see login page).
+      window.location.assign("/dashboard");
     } catch (err: any) {
       setError(err.message ?? "Failed to save profile");
     } finally {
@@ -444,7 +445,8 @@ export default function OnboardingPage() {
 
   function skipToApp() {
     if (!getAccessToken()) { router.replace("/login"); return; }
-    router.replace("/dashboard");
+    // Hard navigation so the middleware sees the auth cookie (see login page).
+    window.location.assign("/dashboard");
   }
 
   return (

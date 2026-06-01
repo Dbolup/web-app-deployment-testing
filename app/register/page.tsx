@@ -22,8 +22,9 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (getAccessToken()) router.replace("/dashboard");
-  }, [router]);
+    // Hard navigation so the middleware sees the auth cookie (see login page).
+    if (getAccessToken()) window.location.assign("/dashboard");
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

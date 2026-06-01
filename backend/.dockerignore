@@ -1,0 +1,12 @@
+env
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+db.sqlite3
+media
+staticfiles
+.env
+.git
+Dockerfile
+.dockerignore
