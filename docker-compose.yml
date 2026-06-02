@@ -22,7 +22,7 @@ services:
       context: .
       args:
         # Baked into the client bundle at build time; points at the published backend port.
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_URL: https://str.ec2.alluvium.net
     container_name: tenderflow-frontend
     ports:
       - "3005:3005"

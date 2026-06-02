@@ -31,7 +31,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         workspace_name = validated_data.pop('workspace_name', None)
         user = User.objects.create_user(**validated_data)
         name = workspace_name or f"{user.first_name}'s Workspace"
-        workspace = Workspace.objects.create(name=name, owner=user)
+        workspace, created = Workspace.objects.get_or_create(name=name, owner=user)
         TeamMember.objects.create(
             workspace=workspace, user=user, role=TeamMember.Role.SUPER_ADMIN, status=TeamMember.Status.ACTIVE
         )

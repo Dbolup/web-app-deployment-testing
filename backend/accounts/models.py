@@ -76,6 +76,7 @@ class Workspace(models.Model):
 
 class TeamMember(models.Model):
     class Role(models.TextChoices):
+        SUPER_ADMIN = 'super_admin', 'Super Admin'
         ADMIN = 'admin', 'Admin'
         REVIEWER = 'reviewer', 'Reviewer'
         MEMBER = 'member', 'Member'
