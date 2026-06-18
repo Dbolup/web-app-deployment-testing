@@ -22,6 +22,8 @@ services:
       args:
         # Baked into the client bundle at build time; points at the published backend port.
         NEXT_PUBLIC_API_URL: https://str.ec2.alluvium.net
+        # Must match the basePath in next.config.ts and the nginx location prefix.
+        NEXT_PUBLIC_BASE_PATH: /tenderflow
     container_name: tenderflow-frontend
     ports:
       - "3005:3005"

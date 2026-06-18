@@ -9,8 +9,9 @@ import { login, setTokens, getAccessToken } from "@/lib/api";
 function LoginForm() {
   const searchParams = useSearchParams();
   // Ignore "/" (the bare root, which only redirects here) so we land on the app.
+  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const next = searchParams.get("next");
-  const nextUrl = next && next !== "/" ? next : "/dashboard";
+  const nextUrl = base + (next && next !== "/" ? next : "/dashboard");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

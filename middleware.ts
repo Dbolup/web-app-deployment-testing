@@ -19,7 +19,8 @@ export function middleware(request: NextRequest) {
   // Check for access token in cookies (set by client after login)
   const token = request.cookies.get("access_token")?.value;
   if (!token) {
-    const loginUrl = new URL("/login", request.url);
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
   }

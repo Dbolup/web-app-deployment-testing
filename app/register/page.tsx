@@ -23,7 +23,7 @@ export default function RegisterPage() {
 
   useEffect(() => {
     // Hard navigation so the middleware sees the auth cookie (see login page).
-    if (getAccessToken()) window.location.assign("/dashboard");
+    if (getAccessToken()) window.location.assign((process.env.NEXT_PUBLIC_BASE_PATH ?? "") + "/dashboard");
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
