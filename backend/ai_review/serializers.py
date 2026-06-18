@@ -47,6 +47,15 @@ class HumanFeedbackCreateSerializer(serializers.ModelSerializer):
         return value
 
 
+class BulkReviewRequestSerializer(serializers.Serializer):
+    ref_ids = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        max_length=20,
+        help_text='Optional list of tender ref_ids to review (max 20). Omit to auto-select.',
+    )
+
+
 class TenderSuggestionSerializer(serializers.Serializer):
     ref_id = serializers.CharField()
     title = serializers.CharField()

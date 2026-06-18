@@ -13,9 +13,10 @@ from .models import CompanyProfile, AIReview, HumanFeedback
 from .serializers import (
     CompanyProfileSerializer, AIReviewSerializer,
     HumanFeedbackSerializer, HumanFeedbackCreateSerializer,
-    TenderSuggestionSerializer,
+    TenderSuggestionSerializer, BulkReviewRequestSerializer,
 )
 from .services.reviewer import run_review
+from .tasks import bulk_review_tenders
 
 logger = logging.getLogger(__name__)
 
@@ -374,3 +375,81 @@ class SuggestedTendersView(generics.GenericAPIView):
 
         serializer = TenderSuggestionSerializer(data, many=True)
         return Response(serializer.data)
+
+
+# ---------------------------------------------------------------------------
+# Bulk review
+# ---------------------------------------------------------------------------
+
+BULK_MAX = 20
+
+
+@extend_schema(
+    tags=[_TAG],
+    summary='Queue bulk AI review (up to 20 tenders)',
+    description=(
+        'Enqueues an async task that runs AI reviews for up to 20 tenders in the workspace.\n\n'
+        'If `ref_ids` is supplied, those specific tenders are reviewed (max 20). '
+        'If omitted, the next 20 tenders without a completed review are selected automatically '
+        '(unreviewed first, then previously failed).\n\n'
+        '**Prerequisites**: company profile must exist and `onboarding_completed` must be `true`.\n\n'
+        'The endpoint returns immediately — reviews run in the background. '
+        'Poll `GET /api/ai-review/tenders/{ref_id}/review/` or the suggestions endpoint to see results.'
+    ),
+    request=BulkReviewRequestSerializer,
+    responses={
+        202: OpenApiResponse(description='{"queued": 20, "ref_ids": [...]}'),
+        400: OpenApiResponse(description='Onboarding incomplete or no tenders to review'),
+        404: OpenApiResponse(description='Company profile not found'),
+    },
+)
+class BulkReviewView(generics.GenericAPIView):
+    serializer_class = BulkReviewRequestSerializer
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        workspace = _get_workspace(request.user)
+
+        try:
+            profile = workspace.company_profile
+        except CompanyProfile.DoesNotExist:
+            return Response(
+                {'detail': 'Company profile not found. Complete onboarding first.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not profile.onboarding_completed:
+            return Response(
+                {'detail': 'Company onboarding is not completed. Set onboarding_completed to true.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = BulkReviewRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ref_ids = serializer.validated_data.get('ref_ids')
+
+        if ref_ids:
+            ref_ids = ref_ids[:BULK_MAX]
+        else:
+            already_done = AIReview.objects.filter(
+                workspace=workspace,
+                review_status=AIReview.ReviewStatus.COMPLETED,
+            ).values_list('tender__ref_id', flat=True)
+
+            candidates = (
+                Tender.objects
+                .exclude(ref_id__in=already_done)
+                .order_by('created_at')
+                .values_list('ref_id', flat=True)[:BULK_MAX]
+            )
+            ref_ids = list(candidates)
+
+        if not ref_ids:
+            return Response(
+                {'detail': 'No tenders available to review.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bulk_review_tenders.enqueue(workspace.pk, ref_ids)
+
+        return Response({'queued': len(ref_ids), 'ref_ids': ref_ids}, status=status.HTTP_202_ACCEPTED)
