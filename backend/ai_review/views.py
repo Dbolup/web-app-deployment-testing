@@ -346,7 +346,7 @@ class SuggestedTendersView(generics.GenericAPIView):
         workspace = _get_workspace(request.user)
         limit = min(int(request.query_params.get('limit', 20)), 100)
         rec_filter = request.query_params.get('recommendation', '')
-        recs = [r.strip() for r in rec_filter.split(',') if r.strip()] if rec_filter else ['pursue', 'review']
+        recs = [r.strip() for r in rec_filter.split(',') if r.strip()] if rec_filter else ['pursue', 'review', 'skip']
 
         reviews = (
             AIReview.objects

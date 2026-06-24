@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import CompanyProfile, AIReview, HumanFeedback
+from pipeline.models import PipelineItem
 
 
 class CompanyProfileSerializer(serializers.ModelSerializer):
@@ -22,6 +23,22 @@ class AIReviewSerializer(serializers.ModelSerializer):
     tender_ref_id = serializers.CharField(source='tender.ref_id', read_only=True)
     tender_title = serializers.CharField(source='tender.title', read_only=True)
     human_feedback = HumanFeedbackSerializer(read_only=True)
+    pipeline_stage = serializers.SerializerMethodField()
+    pipeline_id = serializers.SerializerMethodField()
+
+    def _get_pipeline_item(self, obj):
+        try:
+            return obj.tender.pipeline_items.get(workspace=obj.workspace)
+        except PipelineItem.DoesNotExist:
+            return None
+
+    def get_pipeline_stage(self, obj):
+        item = self._get_pipeline_item(obj)
+        return item.stage if item else None
+
+    def get_pipeline_id(self, obj):
+        item = self._get_pipeline_item(obj)
+        return item.id if item else None
 
     class Meta:
         model = AIReview
