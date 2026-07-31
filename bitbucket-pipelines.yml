@@ -32,34 +32,55 @@ definitions:
         caches:
           - node
         script:
-          - apk add --no-cache libc6-compat
-          - npm ci
-          # NOTE: report-only on purpose. As of this pipeline being added,
-          # eslint reports 17 errors and 16 warnings across app/, components/
-          # and lib/ -- a backlog that predates CI running at all. Blocking on
-          # it today would fail every build and stop the branch deploying.
+          # THE APP IS NOT ON EVERY BRANCH. `dev` currently holds only this
+          # pipeline file and .gitignore -- the Next.js app and the Django
+          # backend still live on the feature branches and have not been merged
+          # down. `npm ci` against such a checkout fails with
+          #   EUSAGE: can only install with an existing package-lock.json
+          # and took the whole pipeline down with it.
           #
-          # Two of the errors are real bugs rather than style, and are worth
-          # fixing before this is turned on:
-          #   * components/ui/Menubar.tsx -- useEditorState() is called after an
-          #     early `if (!editor) return null`, so the hook order changes
-          #     between renders once `editor` becomes non-null
-          #     (react-hooks/rules-of-hooks).
-          #   * components/discovery/TenderTable.tsx -- setError()/setLoading()
-          #     run synchronously in an effect body, causing cascading renders
-          #     (react-hooks/set-state-in-effect).
+          # So every step in this file checks for the code it needs and skips
+          # cleanly when it is absent. Once a branch actually has the app, the
+          # guard passes and each step runs exactly as it would have.
           #
-          # The remaining 15 are mechanical: 11 `catch (err: any)` and other
-          # loose `any`, 3 unescaped apostrophes in JSX, and one `<a>` pointing
-          # at an internal page that should be `<Link>` from next/link.
-          #
-          # To make this blocking, clear the backlog, then drop the trailing
-          # `|| true` below and restore the step name to "Frontend - Lint".
-          # `npm run lint -- --max-warnings=0` would additionally gate the
-          # 16 warnings, which are not counted above.
-          - echo "Running eslint..."
-          - npm run lint || true
-          - echo "Lint finished (findings above do not fail the build yet)"
+          # Each step is a single block on purpose: a bare `exit 0` in one
+          # script item would not reliably stop the items after it, so the guard
+          # wraps the work rather than trying to return early.
+          - |
+            set -e
+            if [ ! -f package-lock.json ]; then
+              echo "No package-lock.json in this checkout -- the frontend is not on this branch yet."
+              echo "Skipping lint. This step will run as soon as the app is merged here."
+            else
+              apk add --no-cache libc6-compat
+              npm ci
+              # NOTE: report-only on purpose. As of this pipeline being added,
+              # eslint reports 17 errors and 16 warnings across app/, components/
+              # and lib/ -- a backlog that predates CI running at all. Blocking on
+              # it today would fail every build and stop the branch deploying.
+              #
+              # Two of the errors are real bugs rather than style, and are worth
+              # fixing before this is turned on:
+              #   * components/ui/Menubar.tsx -- useEditorState() is called after
+              #     an early `if (!editor) return null`, so the hook order changes
+              #     between renders once `editor` becomes non-null
+              #     (react-hooks/rules-of-hooks).
+              #   * components/discovery/TenderTable.tsx -- setError()/setLoading()
+              #     run synchronously in an effect body, causing cascading renders
+              #     (react-hooks/set-state-in-effect).
+              #
+              # The remaining 15 are mechanical: 11 `catch (err: any)` and other
+              # loose `any`, 3 unescaped apostrophes in JSX, and one `<a>` pointing
+              # at an internal page that should be `<Link>` from next/link.
+              #
+              # To make this blocking, clear the backlog, then drop the trailing
+              # `|| true` below and restore the step name to "Frontend - Lint".
+              # `npm run lint -- --max-warnings=0` would additionally gate the
+              # 16 warnings, which are not counted above.
+              echo "Running eslint..."
+              npm run lint || true
+              echo "Lint finished (findings above do not fail the build yet)"
+            fi
         condition:
           changesets:
             includePaths:
@@ -79,16 +100,26 @@ definitions:
           - node
           - nextcache
         script:
-          - apk add --no-cache libc6-compat
-          - npm ci
-          # NEXT_PUBLIC_* values are inlined into the client bundle at build
-          # time, so they must match what the deployed app will serve under.
-          # Override via repository variables to build against another host.
-          - export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}"
-          - export NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}"
-          - export NEXT_TELEMETRY_DISABLED=1
-          - npm run build
+          # See the guard comment on the lint step above.
+          - |
+            set -e
+            if [ ! -f package-lock.json ]; then
+              echo "No package-lock.json in this checkout -- the frontend is not on this branch yet."
+              echo "Skipping build."
+            else
+              apk add --no-cache libc6-compat
+              npm ci
+              # NEXT_PUBLIC_* values are inlined into the client bundle at build
+              # time, so they must match what the deployed app will serve under.
+              # Override via repository variables to build against another host.
+              export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}"
+              export NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}"
+              export NEXT_TELEMETRY_DISABLED=1
+              npm run build
+            fi
         artifacts:
+          # Nothing is produced when the guard skips. `.next/**` matching no
+          # files is not an error, so the step still passes.
           - .next/**
         condition:
           changesets:
@@ -108,9 +139,17 @@ definitions:
         caches:
           - node
         script:
-          - npm ci
-          # Advisory only: a new upstream advisory should not block a release.
-          - npm audit --audit-level=high || true
+          # See the guard comment on the lint step above.
+          - |
+            set -e
+            if [ ! -f package-lock.json ]; then
+              echo "No package-lock.json in this checkout -- the frontend is not on this branch yet."
+              echo "Skipping dependency audit."
+            else
+              npm ci
+              # Advisory only: a new upstream advisory should not block a release.
+              npm audit --audit-level=high || true
+            fi
         condition:
           changesets:
             includePaths:
@@ -127,16 +166,25 @@ definitions:
         caches:
           - pipcache
         script:
-          - cd backend
-          - pip install -r requirements.txt
-          # Every setting in core/settings.py has a default, so no .env is
-          # needed here. Keep DEBUG off so check surfaces production issues.
-          - export DEBUG=False
-          - export SECRET_KEY=ci-only-not-a-real-secret
-          - export ALLOWED_HOSTS=localhost,127.0.0.1
-          - python manage.py check
-          # Fails if a model change was committed without its migration.
-          - python manage.py makemigrations --check --dry-run
+          # See the guard comment on the lint step above. Without it `cd backend`
+          # fails outright on a branch that does not carry the backend.
+          - |
+            set -e
+            if [ ! -f backend/manage.py ]; then
+              echo "No backend/manage.py in this checkout -- the backend is not on this branch yet."
+              echo "Skipping checks."
+            else
+              cd backend
+              pip install -r requirements.txt
+              # Every setting in core/settings.py has a default, so no .env is
+              # needed here. Keep DEBUG off so check surfaces production issues.
+              export DEBUG=False
+              export SECRET_KEY=ci-only-not-a-real-secret
+              export ALLOWED_HOSTS=localhost,127.0.0.1
+              python manage.py check
+              # Fails if a model change was committed without its migration.
+              python manage.py makemigrations --check --dry-run
+            fi
         condition:
           changesets:
             includePaths:
@@ -149,20 +197,28 @@ definitions:
         caches:
           - pipcache
         script:
-          - cd backend
-          - pip install -r requirements.txt
-          - export DEBUG=False
-          - export SECRET_KEY=ci-only-not-a-real-secret
-          - export ALLOWED_HOSTS=localhost,127.0.0.1
-          # Run background tasks inline instead of queueing them.
-          - export DJANGO_TASKS_BACKEND=django.tasks.backends.immediate.ImmediateBackend
-          # Never let a test reach a real SMTP server or the Anthropic API.
-          - export EMAIL_BACKEND=django.core.mail.backends.locmem.EmailBackend
-          - export ANTHROPIC_API_KEY=""
-          - export FIND_TENDER_API_KEY=""
-          # Tests use a throwaway SQLite database; --noinput so a stale test db
-          # is recreated rather than prompting.
-          - python manage.py test --verbosity=2 --noinput
+          # See the guard comment on the lint step above.
+          - |
+            set -e
+            if [ ! -f backend/manage.py ]; then
+              echo "No backend/manage.py in this checkout -- the backend is not on this branch yet."
+              echo "Skipping tests."
+            else
+              cd backend
+              pip install -r requirements.txt
+              export DEBUG=False
+              export SECRET_KEY=ci-only-not-a-real-secret
+              export ALLOWED_HOSTS=localhost,127.0.0.1
+              # Run background tasks inline instead of queueing them.
+              export DJANGO_TASKS_BACKEND=django.tasks.backends.immediate.ImmediateBackend
+              # Never let a test reach a real SMTP server or the model API.
+              export EMAIL_BACKEND=django.core.mail.backends.locmem.EmailBackend
+              export ANTHROPIC_API_KEY=""
+              export FIND_TENDER_API_KEY=""
+              # Tests use a throwaway SQLite database; --noinput so a stale test
+              # db is recreated rather than prompting.
+              python manage.py test --verbosity=2 --noinput
+            fi
         condition:
           changesets:
             includePaths:
@@ -180,13 +236,22 @@ definitions:
         caches:
           - docker
         script:
-          - docker build -t tenderflow-backend:$BITBUCKET_COMMIT ./backend
+          # See the guard comment on the lint step above. This step has no
+          # changesets condition, so on a branch without the app it would
+          # otherwise run and fail on the missing Dockerfiles every time.
           - |
-            docker build \
-              --build-arg NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}" \
-              --build-arg NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}" \
-              -t tenderflow-frontend:$BITBUCKET_COMMIT .
-          - echo "Both images built successfully"
+            set -e
+            if [ ! -f Dockerfile ] || [ ! -f backend/Dockerfile ]; then
+              echo "Dockerfile and/or backend/Dockerfile missing -- the app is not on this branch yet."
+              echo "Skipping image validation."
+            else
+              docker build -t tenderflow-backend:$BITBUCKET_COMMIT ./backend
+              docker build \
+                --build-arg NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}" \
+                --build-arg NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}" \
+                -t tenderflow-frontend:$BITBUCKET_COMMIT .
+              echo "Both images built successfully"
+            fi
 
     # ------------------------------------------------------------------
     # Deploy — manual gate, rebuilds and restarts the compose stack
