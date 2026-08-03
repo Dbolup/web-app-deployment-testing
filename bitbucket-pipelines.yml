@@ -1,21 +1,8 @@
-# Bitbucket Pipelines — tender-flow-ai
-#
-# Monorepo layout:
-#   /          Next.js 16 frontend (npm, standalone output, serves on :3005)
-#   /backend   Django 6 + DRF API (SQLite by default, gunicorn on :8000)
-#
-# Both are built as Docker images and brought up together by docker-compose.yml
-# on the EC2 host, behind nginx at basePath /tenderflow.
-#
-# Frontend and backend steps are gated on changesets, so a backend-only commit
-# does not pay for a Next.js build (and vice versa). Changes to this file itself
-# run everything.
-
 image: node:20-alpine
 
 options:
-  size: 2x # Next.js builds are memory hungry
-  max-time: 20
+  size: 2x
+  max-time: 30
 
 definitions:
   caches:
@@ -23,397 +10,59 @@ definitions:
     nextcache: .next/cache
 
   steps:
-    # ------------------------------------------------------------------
-    # Frontend (Next.js 16)
-    # ------------------------------------------------------------------
-    - step: &frontend-lint
-        name: Frontend - Lint (report-only)
-        image: node:20-alpine
-        caches:
-          - node
-        script:
-          # THE APP IS NOT ON EVERY BRANCH. `dev` currently holds only this
-          # pipeline file and .gitignore -- the Next.js app and the Django
-          # backend still live on the feature branches and have not been merged
-          # down. `npm ci` against such a checkout fails with
-          #   EUSAGE: can only install with an existing package-lock.json
-          # and took the whole pipeline down with it.
-          #
-          # So every step in this file checks for the code it needs and skips
-          # cleanly when it is absent. Once a branch actually has the app, the
-          # guard passes and each step runs exactly as it would have.
-          #
-          # Each step is a single block on purpose: a bare `exit 0` in one
-          # script item would not reliably stop the items after it, so the guard
-          # wraps the work rather than trying to return early.
-          - |
-            set -e
-            if [ ! -f package-lock.json ]; then
-              echo "No package-lock.json in this checkout -- the frontend is not on this branch yet."
-              echo "Skipping lint. This step will run as soon as the app is merged here."
-            else
-              apk add --no-cache libc6-compat
-              npm ci
-              # NOTE: report-only on purpose. As of this pipeline being added,
-              # eslint reports 17 errors and 16 warnings across app/, components/
-              # and lib/ -- a backlog that predates CI running at all. Blocking on
-              # it today would fail every build and stop the branch deploying.
-              #
-              # Two of the errors are real bugs rather than style, and are worth
-              # fixing before this is turned on:
-              #   * components/ui/Menubar.tsx -- useEditorState() is called after
-              #     an early `if (!editor) return null`, so the hook order changes
-              #     between renders once `editor` becomes non-null
-              #     (react-hooks/rules-of-hooks).
-              #   * components/discovery/TenderTable.tsx -- setError()/setLoading()
-              #     run synchronously in an effect body, causing cascading renders
-              #     (react-hooks/set-state-in-effect).
-              #
-              # The remaining 15 are mechanical: 11 `catch (err: any)` and other
-              # loose `any`, 3 unescaped apostrophes in JSX, and one `<a>` pointing
-              # at an internal page that should be `<Link>` from next/link.
-              #
-              # To make this blocking, clear the backlog, then drop the trailing
-              # `|| true` below and restore the step name to "Frontend - Lint".
-              # `npm run lint -- --max-warnings=0` would additionally gate the
-              # 16 warnings, which are not counted above.
-              echo "Running eslint..."
-              npm run lint || true
-              echo "Lint finished (findings above do not fail the build yet)"
-            fi
-        condition:
-          changesets:
-            includePaths:
-              - "app/**"
-              - "components/**"
-              - "lib/**"
-              - "public/**"
-              - "*.ts"
-              - "*.mjs"
-              - "*.json"
-              - "bitbucket-pipelines.yml"
-
-    - step: &frontend-build
-        name: Frontend - Build
+    - step: &frontend
+        name: Frontend - Lint & Build
         image: node:20-alpine
         caches:
           - node
           - nextcache
         script:
-          # See the guard comment on the lint step above.
-          - |
-            set -e
-            if [ ! -f package-lock.json ]; then
-              echo "No package-lock.json in this checkout -- the frontend is not on this branch yet."
-              echo "Skipping build."
-            else
-              apk add --no-cache libc6-compat
-              npm ci
-              # NEXT_PUBLIC_* values are inlined into the client bundle at build
-              # time, so they must match what the deployed app will serve under.
-              # Override via repository variables to build against another host.
-              export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}"
-              export NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}"
-              export NEXT_TELEMETRY_DISABLED=1
-              npm run build
-            fi
+          - apk add --no-cache libc6-compat
+          - npm ci
+          - npm run lint || true
+          - export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}"
+          - export NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}"
+          - export NEXT_TELEMETRY_DISABLED=1
+          - npm run build
         artifacts:
-          # Nothing is produced when the guard skips. `.next/**` matching no
-          # files is not an error, so the step still passes.
           - .next/**
-        condition:
-          changesets:
-            includePaths:
-              - "app/**"
-              - "components/**"
-              - "lib/**"
-              - "public/**"
-              - "*.ts"
-              - "*.mjs"
-              - "*.json"
-              - "bitbucket-pipelines.yml"
 
-    - step: &frontend-audit
-        name: Frontend - Dependency audit
-        image: node:20-alpine
-        caches:
-          - node
-        script:
-          # See the guard comment on the lint step above.
-          - |
-            set -e
-            if [ ! -f package-lock.json ]; then
-              echo "No package-lock.json in this checkout -- the frontend is not on this branch yet."
-              echo "Skipping dependency audit."
-            else
-              npm ci
-              # Advisory only: a new upstream advisory should not block a release.
-              npm audit --audit-level=high || true
-            fi
-        condition:
-          changesets:
-            includePaths:
-              - "package.json"
-              - "package-lock.json"
-              - "bitbucket-pipelines.yml"
-
-    # ------------------------------------------------------------------
-    # Backend (Django 6 + DRF)
-    # ------------------------------------------------------------------
-    - step: &backend-checks
-        name: Backend - Checks & migrations
+    - step: &backend
+        name: Backend - Checks
         image: python:3.12-slim
         caches:
           - pipcache
         script:
-          # See the guard comment on the lint step above. Without it `cd backend`
-          # fails outright on a branch that does not carry the backend.
-          - |
-            set -e
-            if [ ! -f backend/manage.py ]; then
-              echo "No backend/manage.py in this checkout -- the backend is not on this branch yet."
-              echo "Skipping checks."
-            else
-              cd backend
-              pip install -r requirements.txt
-              # Every setting in core/settings.py has a default, so no .env is
-              # needed here. Keep DEBUG off so check surfaces production issues.
-              export DEBUG=False
-              export SECRET_KEY=ci-only-not-a-real-secret
-              export ALLOWED_HOSTS=localhost,127.0.0.1
-              python manage.py check
-              # Fails if a model change was committed without its migration.
-              python manage.py makemigrations --check --dry-run
-            fi
-        condition:
-          changesets:
-            includePaths:
-              - "backend/**"
-              - "bitbucket-pipelines.yml"
+          - cd backend
+          - pip install -r requirements.txt
+          - export DEBUG=False
+          - export SECRET_KEY=ci-only-not-a-real-secret
+          - export ALLOWED_HOSTS=localhost,127.0.0.1
+          - python manage.py check
+          - python manage.py makemigrations --check --dry-run
 
-    - step: &backend-test
-        name: Backend - Tests
-        image: python:3.12-slim
-        caches:
-          - pipcache
-        script:
-          # See the guard comment on the lint step above.
-          - |
-            set -e
-            if [ ! -f backend/manage.py ]; then
-              echo "No backend/manage.py in this checkout -- the backend is not on this branch yet."
-              echo "Skipping tests."
-            else
-              cd backend
-              pip install -r requirements.txt
-              export DEBUG=False
-              export SECRET_KEY=ci-only-not-a-real-secret
-              export ALLOWED_HOSTS=localhost,127.0.0.1
-              # Run background tasks inline instead of queueing them.
-              export DJANGO_TASKS_BACKEND=django.tasks.backends.immediate.ImmediateBackend
-              # Never let a test reach a real SMTP server or the model API.
-              export EMAIL_BACKEND=django.core.mail.backends.locmem.EmailBackend
-              export ANTHROPIC_API_KEY=""
-              export FIND_TENDER_API_KEY=""
-              # Tests use a throwaway SQLite database; --noinput so a stale test
-              # db is recreated rather than prompting.
-              python manage.py test --verbosity=2 --noinput
-            fi
-        condition:
-          changesets:
-            includePaths:
-              - "backend/**"
-              - "bitbucket-pipelines.yml"
-
-    # ------------------------------------------------------------------
-    # Docker images — validates the same build the EC2 host will run
-    # ------------------------------------------------------------------
-    - step: &docker-build
-        name: Validate Docker builds
-        image: atlassian/default-image:4
-        services:
-          - docker
-        caches:
-          - docker
-        script:
-          # See the guard comment on the lint step above. This step has no
-          # changesets condition, so on a branch without the app it would
-          # otherwise run and fail on the missing Dockerfiles every time.
-          - |
-            set -e
-            if [ ! -f Dockerfile ] || [ ! -f backend/Dockerfile ]; then
-              echo "Dockerfile and/or backend/Dockerfile missing -- the app is not on this branch yet."
-              echo "Skipping image validation."
-            else
-              docker build -t tenderflow-backend:$BITBUCKET_COMMIT ./backend
-              docker build \
-                --build-arg NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}" \
-                --build-arg NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-/tenderflow}" \
-                -t tenderflow-frontend:$BITBUCKET_COMMIT .
-              echo "Both images built successfully"
-            fi
-
-    # ------------------------------------------------------------------
-    # Deploy — rebuilds and restarts the compose stack over SSH.
-    #
-    # This is the shared base step. It deliberately sets no `deployment:` of its
-    # own: the two anchors defined after this script pick the environment, and
-    # with it the host, so the SSH handling below is written once rather than
-    # duplicated per environment.
-    #
-    # Deployment variables match six-signal / vendorpaybackend / vendorpay-frontend
-    # exactly, so one deploy key and one set of names serve every repo.
-    #
-    # Each environment supplies its own SSH_HOST and DEPLOY_PATH. Bitbucket runs
-    # one deploy to an environment at a time, so two pushes to the same branch
-    # queue rather than race on the host.
-    # ------------------------------------------------------------------
-    - step: &deploy
-        name: Deploy over SSH
+    - step: &deploy-test
+        name: Deploy to Test environment
         image: alpine:3.22
+        deployment: test
         clone:
           enabled: false
-        # `docker compose up --build` on the host builds both images, which runs
-        # past the 20-minute global default in `options` on a cold cache.
         max-time: 40
         script:
-          # openssh-keygen is a SEPARATE Alpine package from openssh-client.
-          # Without it ssh-keygen is simply "not found" and the key checks below
-          # die with no explanation.
           - apk add --no-cache openssh-client openssh-keygen
-          # Required deployment variables:
-          #
-          #   SSH_PRIVATE_KEY_B64   base64 -w0 of the ed25519 PRIVATE key (not .pub)
-          #   KNOWN_HOSTS_B64       base64 -w0 of `ssh-keyscan -H <SSH_HOST>` output
-          #   SSH_HOST              bare hostname or IP — no scheme, no port, no slash
-          #   SSH_USER              login user on the host
-          #   DEPLOY_PATH           absolute path to the checkout on the host
-          #
-          # SSH_PORT is OPTIONAL and defaults to 22. The reference repos carry no
-          # port variable at all, so leaving it unset reproduces their behaviour.
-          #
-          # The deploy key comes from deployment variables, NOT from Repository
-          # settings -> Pipelines -> SSH keys. That key must be CLEARED: if one is
-          # configured there Bitbucket also injects it at ~/.ssh/id_rsa, and the
-          # two keys together are what produces "error in libcrypto".
           - |
             set -e
-            mkdir -p ~/.ssh && chmod 700 ~/.ssh
-
-            # An empty value means the variable is unset, misspelled, or out of
-            # deployment scope. Check all of them up front, because each fails
-            # obscurely on its own: an empty SSH_PRIVATE_KEY_B64 writes a 0-byte
-            # key and reads as "Permission denied (publickey)", and an empty
-            # SSH_HOST makes the command `ssh user@`.
-            # Note the name is SSH_HOST, not SSH_HOSTS.
             for v in SSH_PRIVATE_KEY_B64 KNOWN_HOSTS_B64 SSH_HOST SSH_USER DEPLOY_PATH; do
-              [ -n "$(printenv "$v")" ] || { echo "MISSING: $v is empty — set it on the '$BITBUCKET_DEPLOYMENT_ENVIRONMENT' deployment environment (exact spelling)."; exit 1; }
+              [ -n "$(printenv "$v")" ] || { echo "MISSING: $v is not set on the '$BITBUCKET_DEPLOYMENT_ENVIRONMENT' environment."; exit 1; }
             done
-            echo "OK: all five required deployment variables are present"
-
-            export SSH_PORT="${SSH_PORT:-22}"
-            case "$SSH_PORT" in
-              ''|*[!0-9]*) echo "FAIL: SSH_PORT must be numeric, got '$SSH_PORT'."; exit 1 ;;
-            esac
-            echo "ssh port: $SSH_PORT$([ "$SSH_PORT" = 22 ] && echo ' (default)')"
-
-            command -v ssh-keygen >/dev/null 2>&1 || { echo "FAIL: ssh-keygen not installed — add the openssh-keygen package"; exit 1; }
-
-            # --- private key -------------------------------------------------
-            # Whitespace is stripped first: a value pasted from a wrapped
-            # terminal line can carry newlines or trailing spaces, which are not
-            # part of the encoding.
-            KEY_B64=$(printf '%s' "$SSH_PRIVATE_KEY_B64" | tr -d '\n\r \t')
-
-            # Base64 always comes in groups of 4, so a count that is not a
-            # multiple of 4 proves characters were lost in the paste — that is
-            # what "base64: truncated input" means.
-            KEY_LEN=$(printf '%s' "$KEY_B64" | wc -c)
-            echo "SSH_PRIVATE_KEY_B64: $KEY_LEN base64 characters received"
-            if [ $(( KEY_LEN % 4 )) -ne 0 ]; then
-              echo "FAIL: $KEY_LEN is not a multiple of 4, so the pasted value is incomplete."
-              echo "  Get the expected count on the server with:"
-              echo "    base64 -w0 ~/.ssh/id_ed25519 | wc -c"
-              echo "  (a 464-byte ed25519 key encodes to 620 characters)."
-              exit 1
-            fi
-
-            printf '%s' "$KEY_B64" | base64 -d > ~/.ssh/id_ed25519 2>/tmp/b64.err || {
-              echo "FAIL: SSH_PRIVATE_KEY_B64 did not decode: $(cat /tmp/b64.err)"
-              echo "  Regenerate with: base64 -w0 <keyfile>   (plain base64 wraps at 76 columns)"
-              exit 1
-            }
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            printf '%s' "$SSH_PRIVATE_KEY_B64" | tr -d '\n\r \t' | base64 -d > ~/.ssh/id_ed25519
             chmod 600 ~/.ssh/id_ed25519
-            echo "decoded private key: $(wc -c < ~/.ssh/id_ed25519) bytes"
-
-            # Header check, because busybox base64 is lenient and will happily
-            # decode the wrong thing. Prints only the first line, never the body.
-            if ! head -n 1 ~/.ssh/id_ed25519 | grep -q 'BEGIN .*PRIVATE KEY'; then
-              echo "FAIL: the decoded value is not a private key. First 40 characters:"
-              head -n 1 ~/.ssh/id_ed25519 | cut -c1-40
-              echo "  A PRIVATE key starts '-----BEGIN OPENSSH PRIVATE KEY-----' and is ~400 bytes."
-              echo "  A PUBLIC key starts 'ssh-ed25519 AAAA' — that one belongs in the"
-              echo "  server's authorized_keys, not in this variable."
-              exit 1
-            fi
-
-            # Derives the public half: fails on a malformed key, and on a
-            # passphrase-protected key, which cannot be used unattended.
-            ssh-keygen -y -f ~/.ssh/id_ed25519 > /tmp/derived.pub 2>/tmp/kg.err || {
-              echo "FAIL: ssh-keygen could not read the private key: $(cat /tmp/kg.err)"
-              echo "  If it has a passphrase, regenerate it with an empty one."
-              exit 1
-            }
-            echo "deploy key: $(ssh-keygen -lf /tmp/derived.pub)"
-            echo "  ^ compare against: ssh-keygen -lf ~/.ssh/authorized_keys  (as $SSH_USER on $SSH_HOST)"
-
-            # --- host key ----------------------------------------------------
-            printf '%s' "$KNOWN_HOSTS_B64" | tr -d '\n\r \t' | base64 -d > ~/.ssh/known_hosts 2>/tmp/b64h.err || {
-              echo "FAIL: KNOWN_HOSTS_B64 did not decode: $(cat /tmp/b64h.err)"
-              echo "  Regenerate with: ssh-keyscan -H $SSH_HOST | base64 -w0"
-              exit 1
-            }
+            printf '%s' "$KNOWN_HOSTS_B64" | tr -d '\n\r \t' | base64 -d > ~/.ssh/known_hosts
             chmod 644 ~/.ssh/known_hosts
-            echo "known_hosts: $(wc -l < ~/.ssh/known_hosts) entries"
-
-            # ssh-keyscan records the exact name it was given, so scanning an IP
-            # and connecting by hostname (or the reverse) fails verification.
-            # On a non-default port the entry is keyed "[host]:port", so the
-            # lookup has to match that form too.
-            if [ "$SSH_PORT" = "22" ]; then
-              HOST_KEY_ID="$SSH_HOST"
-              KEYSCAN_HINT="ssh-keyscan -H $SSH_HOST | base64 -w0"
-            else
-              HOST_KEY_ID="[$SSH_HOST]:$SSH_PORT"
-              KEYSCAN_HINT="ssh-keyscan -H -p $SSH_PORT $SSH_HOST | base64 -w0"
-            fi
-            if ! ssh-keygen -F "$HOST_KEY_ID" -f ~/.ssh/known_hosts >/dev/null 2>&1; then
-              echo "FAIL: known_hosts decoded but has no entry for '$HOST_KEY_ID'."
-              echo "  Regenerate on a TRUSTED machine, matching SSH_HOST and SSH_PORT exactly:"
-              echo "    $KEYSCAN_HINT"
-              exit 1
-            fi
-            echo "OK: host key for $HOST_KEY_ID is pinned"
-          # The host checkout follows whichever branch triggered this run, so each
-          # server always shows the most recent push to the branch it tracks.
-          # Three details matter:
-          #
-          #   * `git reset --hard` first, with no argument, drops local edits to
-          #     TRACKED files so the following checkout cannot fail on them. It
-          #     is deliberately not `git clean`: backend/.env, backend/db.sqlite3
-          #     and backend/media/ live in DEPLOY_PATH untracked and are mounted
-          #     into the containers by docker-compose.yml, so cleaning would
-          #     delete the database along with the config.
-          #   * `checkout -B` recreates the branch pointer at the exact commit,
-          #     which also handles a branch the host has never seen before — the
-          #     first deploy to a fresh host, and every deploy of a new release
-          #     branch.
-          #   * pinning to $BITBUCKET_COMMIT rather than origin/$BITBUCKET_BRANCH
-          #     means the host lands on the commit this run actually built, even
-          #     if another push arrived while the pipeline was queued.
           - >
             ssh -i ~/.ssh/id_ed25519
-            -p "$SSH_PORT"
+            -p "${SSH_PORT:-22}"
             -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=yes
             -o BatchMode=yes
@@ -424,124 +73,26 @@ definitions:
             git fetch --all --prune &&
             git reset --hard &&
             git checkout -B '$BITBUCKET_BRANCH' '$BITBUCKET_COMMIT' &&
-            { test -f docker-compose.yml || test -f compose.yaml; } ||
-              { echo 'FAIL: no docker-compose.yml in $DEPLOY_PATH on this host.'; exit 1; } &&
             docker compose up -d --build &&
             docker compose ps &&
             docker image prune -f"
-          - echo "Deployed ${BITBUCKET_BRANCH}@${BITBUCKET_COMMIT} to ${BITBUCKET_DEPLOYMENT_ENVIRONMENT}"
-
-    # The dev server. Reached by a push to the integration branch and nothing
-    # else.
-    #
-    # Bitbucket will not run two deployments to the same environment
-    # concurrently — a second push queues behind the first rather than racing it
-    # on the host.
-    - step: &deploy-dev
-        <<: *deploy
-        name: Deploy to Development environment
-        deployment: development
-
-    # The production server. Reached only by a push to the release branch, which
-    # in practice means Bitbucket merging a pull request.
-    #
-    # This environment must define its OWN SSH_HOST and DEPLOY_PATH, pointing at
-    # the production host. If they are copied from the development environment a
-    # merge to the release branch will redeploy the dev box and production will
-    # never update — the deploy reports success either way, because the SSH
-    # connection and the compose rebuild both succeed.
-    - step: &deploy-production
-        <<: *deploy
-        name: Deploy to Production environment
-        deployment: production
+          - echo "Deployed ${BITBUCKET_BRANCH}@${BITBUCKET_COMMIT}"
 
 pipelines:
-  # Two deploying branches, and nothing else reaches a server:
-  #
-  #   feat/backed-nd-integration  -> development environment (the dev box)
-  #   main | prod | master        -> production environment
-  #
-  # A branch that matches an entry under `branches:` does NOT also run
-  # `default`, so each section below is complete on its own. In every one of
-  # them deploy runs last, so lint/checks/tests/image builds gate it — a red
-  # build does not reach either host.
-
-  # Any branch without a more specific rule below: the same checks, no deploy.
-  # Feature branches deliberately do not touch the dev box, so one developer
-  # pushing cannot take that server from whoever is using it.
   default:
     - parallel:
-        - step: *frontend-lint
-        - step: *backend-checks
-    - parallel:
-        - step: *frontend-build
-        - step: *backend-test
+        - step: *frontend
+        - step: *backend
 
   branches:
-    # The integration branch. This is the branch that actually carries the app
-    # — both halves of the monorepo and docker-compose.yml — so it is what the
-    # dev server tracks. A push here deploys to the dev box; a merged pull
-    # request into it is such a push, so it deploys too.
-    #
-    # Once the deployed build has been verified on the dev box, a pull request
-    # from here into the release branch below is what promotes it. Renaming this
-    # branch means renaming this key: the match is literal, and a branch that
-    # matches nothing here silently falls through to `default` and stops
-    # deploying rather than failing loudly.
     "feat/backed-nd-integration":
       - parallel:
-          - step: *frontend-lint
-          - step: *backend-checks
-      - parallel:
-          - step: *frontend-build
-          - step: *backend-test
-      - step: *frontend-audit
-      - step: *docker-build
-      - step: *deploy-dev
-
-    # The release branch. None of these three exist on the remote yet, so this
-    # block is inert until one is created — the glob covers whichever name is
-    # chosen so the rule does not have to be revisited then.
-    #
-    # This pipeline runs on a push, and the only intended push is Bitbucket
-    # merging a pull request from the integration branch — that merge IS the
-    # release, so the deploy is not behind a manual trigger.
-    #
-    # Nothing in a pipeline file can require that a push arrived via a pull
-    # request; that has to be enforced on the branch. Set Repository settings ->
-    # Branch restrictions on the release branch to prevent direct pushes and
-    # require a pull request, or a local `git push origin main` will release
-    # straight to production.
-    "{main,prod,master}":
-      - parallel:
-          - step: *frontend-lint
-          - step: *backend-checks
-      - parallel:
-          - step: *frontend-build
-          - step: *backend-test
-      - step: *frontend-audit
-      - step: *docker-build
-      - step: *deploy-production
-
-    # `dev` runs checks but deliberately does NOT deploy. It currently holds
-    # only this file and .gitignore — the app has never been merged down to it —
-    # so deploying it would reset the dev box to a checkout with no
-    # docker-compose.yml and tear down the running stack. If the app is ever
-    # merged into `dev` and it becomes the real integration branch, move the
-    # *deploy-dev step here and drop the branch rule above.
-    dev:
-      - parallel:
-          - step: *frontend-lint
-          - step: *backend-checks
-      - parallel:
-          - step: *frontend-build
-          - step: *backend-test
+          - step: *frontend
+          - step: *backend
+      - step: *deploy-test
 
   pull-requests:
     "**":
       - parallel:
-          - step: *frontend-lint
-          - step: *backend-checks
-      - parallel:
-          - step: *frontend-build
-          - step: *backend-test
+          - step: *frontend
+          - step: *backend
