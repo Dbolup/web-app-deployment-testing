@@ -20,10 +20,19 @@ services:
     build:
       context: .
       args:
-        # Baked into the client bundle at build time; points at the published backend port.
-        NEXT_PUBLIC_API_URL: https://str.ec2.alluvium.net
+        # Baked into the client bundle at BUILD time, so it cannot be changed by
+        # restarting the container — the value below is what the browser will
+        # call. The dev box and the production box therefore need different
+        # values, which is why these are overridable rather than literal: set
+        # them in a .env file next to this compose file on the dev host, e.g.
+        #
+        #     NEXT_PUBLIC_API_URL=https://dev.ec2.alluvium.net
+        #
+        # Left unset, both fall back to the production values, which is what
+        # this file did before it was parameterised.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}
         # Must match the basePath in next.config.ts and the nginx location prefix.
-        NEXT_PUBLIC_BASE_PATH: /tenderflow
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-/tenderflow}
     container_name: tenderflow-frontend
     ports:
       - "3005:3005"

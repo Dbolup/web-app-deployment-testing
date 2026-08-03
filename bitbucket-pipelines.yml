@@ -254,18 +254,28 @@ definitions:
             fi
 
     # ------------------------------------------------------------------
-    # Deploy — manual gate, rebuilds and restarts the compose stack
+    # Deploy — rebuilds and restarts the compose stack over SSH.
+    #
+    # This is the shared base step. It deliberately sets no `deployment:` of its
+    # own: the two anchors defined after this script pick the environment, and
+    # with it the host, so the SSH handling below is written once rather than
+    # duplicated per environment.
     #
     # Deployment variables match six-signal / vendorpaybackend / vendorpay-frontend
     # exactly, so one deploy key and one set of names serve every repo.
+    #
+    # Each environment supplies its own SSH_HOST and DEPLOY_PATH. Bitbucket runs
+    # one deploy to an environment at a time, so two pushes to the same branch
+    # queue rather than race on the host.
     # ------------------------------------------------------------------
-    - step: &deploy-ec2
+    - step: &deploy
         name: Deploy over SSH
         image: alpine:3.22
-        deployment: production
-        trigger: manual
         clone:
           enabled: false
+        # `docker compose up --build` on the host builds both images, which runs
+        # past the 20-minute global default in `options` on a cold cache.
+        max-time: 40
         script:
           # openssh-keygen is a SEPARATE Alpine package from openssh-client.
           # Without it ssh-keygen is simply "not found" and the key checks below
@@ -384,6 +394,23 @@ definitions:
               exit 1
             fi
             echo "OK: host key for $HOST_KEY_ID is pinned"
+          # The host checkout follows whichever branch triggered this run, so each
+          # server always shows the most recent push to the branch it tracks.
+          # Three details matter:
+          #
+          #   * `git reset --hard` first, with no argument, drops local edits to
+          #     TRACKED files so the following checkout cannot fail on them. It
+          #     is deliberately not `git clean`: backend/.env, backend/db.sqlite3
+          #     and backend/media/ live in DEPLOY_PATH untracked and are mounted
+          #     into the containers by docker-compose.yml, so cleaning would
+          #     delete the database along with the config.
+          #   * `checkout -B` recreates the branch pointer at the exact commit,
+          #     which also handles a branch the host has never seen before — the
+          #     first deploy to a fresh host, and every deploy of a new release
+          #     branch.
+          #   * pinning to $BITBUCKET_COMMIT rather than origin/$BITBUCKET_BRANCH
+          #     means the host lands on the commit this run actually built, even
+          #     if another push arrived while the pipeline was queued.
           - >
             ssh -i ~/.ssh/id_ed25519
             -p "$SSH_PORT"
@@ -395,14 +422,53 @@ definitions:
             "set -e &&
             cd '$DEPLOY_PATH' &&
             git fetch --all --prune &&
-            git checkout '$BITBUCKET_BRANCH' &&
-            git reset --hard 'origin/$BITBUCKET_BRANCH' &&
+            git reset --hard &&
+            git checkout -B '$BITBUCKET_BRANCH' '$BITBUCKET_COMMIT' &&
+            { test -f docker-compose.yml || test -f compose.yaml; } ||
+              { echo 'FAIL: no docker-compose.yml in $DEPLOY_PATH on this host.'; exit 1; } &&
             docker compose up -d --build &&
             docker compose ps &&
             docker image prune -f"
+          - echo "Deployed ${BITBUCKET_BRANCH}@${BITBUCKET_COMMIT} to ${BITBUCKET_DEPLOYMENT_ENVIRONMENT}"
+
+    # The dev server. Reached by a push to the integration branch and nothing
+    # else.
+    #
+    # Bitbucket will not run two deployments to the same environment
+    # concurrently — a second push queues behind the first rather than racing it
+    # on the host.
+    - step: &deploy-dev
+        <<: *deploy
+        name: Deploy to Development environment
+        deployment: development
+
+    # The production server. Reached only by a push to the release branch, which
+    # in practice means Bitbucket merging a pull request.
+    #
+    # This environment must define its OWN SSH_HOST and DEPLOY_PATH, pointing at
+    # the production host. If they are copied from the development environment a
+    # merge to the release branch will redeploy the dev box and production will
+    # never update — the deploy reports success either way, because the SSH
+    # connection and the compose rebuild both succeed.
+    - step: &deploy-production
+        <<: *deploy
+        name: Deploy to Production environment
+        deployment: production
 
 pipelines:
-  # Any branch without a more specific rule below.
+  # Two deploying branches, and nothing else reaches a server:
+  #
+  #   feat/backed-nd-integration  -> development environment (the dev box)
+  #   main | prod | master        -> production environment
+  #
+  # A branch that matches an entry under `branches:` does NOT also run
+  # `default`, so each section below is complete on its own. In every one of
+  # them deploy runs last, so lint/checks/tests/image builds gate it — a red
+  # build does not reach either host.
+
+  # Any branch without a more specific rule below: the same checks, no deploy.
+  # Feature branches deliberately do not touch the dev box, so one developer
+  # pushing cannot take that server from whoever is using it.
   default:
     - parallel:
         - step: *frontend-lint
@@ -412,7 +478,17 @@ pipelines:
         - step: *backend-test
 
   branches:
-    dev:
+    # The integration branch. This is the branch that actually carries the app
+    # — both halves of the monorepo and docker-compose.yml — so it is what the
+    # dev server tracks. A push here deploys to the dev box; a merged pull
+    # request into it is such a push, so it deploys too.
+    #
+    # Once the deployed build has been verified on the dev box, a pull request
+    # from here into the release branch below is what promotes it. Renaming this
+    # branch means renaming this key: the match is literal, and a branch that
+    # matches nothing here silently falls through to `default` and stops
+    # deploying rather than failing loudly.
+    "feat/backed-nd-integration":
       - parallel:
           - step: *frontend-lint
           - step: *backend-checks
@@ -421,11 +497,45 @@ pipelines:
           - step: *backend-test
       - step: *frontend-audit
       - step: *docker-build
-      - step: *deploy-ec2
+      - step: *deploy-dev
 
-    # No `main` rule: `dev` is this repo's default and only long-lived branch.
-    # Any other branch falls through to `default` above, which runs the checks
-    # without deploying. Add a `main` block here if a release branch appears.
+    # The release branch. None of these three exist on the remote yet, so this
+    # block is inert until one is created — the glob covers whichever name is
+    # chosen so the rule does not have to be revisited then.
+    #
+    # This pipeline runs on a push, and the only intended push is Bitbucket
+    # merging a pull request from the integration branch — that merge IS the
+    # release, so the deploy is not behind a manual trigger.
+    #
+    # Nothing in a pipeline file can require that a push arrived via a pull
+    # request; that has to be enforced on the branch. Set Repository settings ->
+    # Branch restrictions on the release branch to prevent direct pushes and
+    # require a pull request, or a local `git push origin main` will release
+    # straight to production.
+    "{main,prod,master}":
+      - parallel:
+          - step: *frontend-lint
+          - step: *backend-checks
+      - parallel:
+          - step: *frontend-build
+          - step: *backend-test
+      - step: *frontend-audit
+      - step: *docker-build
+      - step: *deploy-production
+
+    # `dev` runs checks but deliberately does NOT deploy. It currently holds
+    # only this file and .gitignore — the app has never been merged down to it —
+    # so deploying it would reset the dev box to a checkout with no
+    # docker-compose.yml and tear down the running stack. If the app is ever
+    # merged into `dev` and it becomes the real integration branch, move the
+    # *deploy-dev step here and drop the branch rule above.
+    dev:
+      - parallel:
+          - step: *frontend-lint
+          - step: *backend-checks
+      - parallel:
+          - step: *frontend-build
+          - step: *backend-test
 
   pull-requests:
     "**":
