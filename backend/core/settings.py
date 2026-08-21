@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import timedelta
 import os
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -103,6 +104,18 @@ TASKS = {
             "django.tasks.backends.immediate.ImmediateBackend",
         ),
     }
+}
+
+# Celery
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_BEAT_SCHEDULE = {
+    'fetch-tenders-every-30-minutes': {
+        'task': 'tenders.tasks.fetch_tenders_task',
+        'schedule': crontab(minute='*/30'),
+    },
 }
 
 # Email

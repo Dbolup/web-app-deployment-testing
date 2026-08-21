@@ -5,15 +5,58 @@ services:
     container_name: tenderflow-backend
     env_file:
       - ./backend/.env
-    
+
     # Allow the container hostname plus localhost for browser/proxy access.
-      
+
     volumes:
       # Persist the SQLite database and uploaded media on the host.
       - ./backend/db.sqlite3:/app/db.sqlite3
       - ./backend/media:/app/media
     ports:
       - "8000:8000"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: tenderflow-redis
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ./backend
+    container_name: tenderflow-celery-worker
+    # Bypass entrypoint.sh (migrate/collectstatic) — the backend service
+    # already runs those; running them again here would race the same
+    # SQLite file on concurrent container startup.
+    entrypoint: []
+    command: ["celery", "-A", "core", "worker", "--loglevel=info"]
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/db.sqlite3:/app/db.sqlite3
+      - ./backend/media:/app/media
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: ./backend
+    container_name: tenderflow-celery-beat
+    entrypoint: []
+    command: ["celery", "-A", "core", "beat", "--loglevel=info"]
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/db.sqlite3:/app/db.sqlite3
+    depends_on:
+      - redis
+      - backend
     restart: unless-stopped
 
   frontend:
@@ -39,3 +82,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  redis-data:
