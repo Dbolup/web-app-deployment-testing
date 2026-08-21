@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { MdOutlineAccountTree } from "react-icons/md";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
-import { login, setTokens, getAccessToken } from "@/lib/api";
+import { login, setTokens, hasSessionCookie } from "@/lib/api";
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -22,7 +22,10 @@ function LoginForm() {
   useEffect(() => {
     // Hard navigation: ensures the middleware sees the auth cookie instead of
     // replaying a pre-login prefetch that bounces back to /login.
-    if (getAccessToken()) window.location.assign(nextUrl);
+    // Checked against the cookie (not localStorage) since that's what the
+    // middleware gates on — localStorage's token can outlive the cookie and
+    // cause a login <-> destination redirect loop.
+    if (hasSessionCookie()) window.location.assign(nextUrl);
   }, [nextUrl]);
 
   async function handleSubmit(e: React.FormEvent) {

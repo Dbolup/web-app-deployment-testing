@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MdOutlineAccountTree } from "react-icons/md";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
-import { register, setTokens, getAccessToken } from "@/lib/api";
+import { register, setTokens, hasSessionCookie } from "@/lib/api";
 
 const INPUT_CLS =
   "w-full px-4 py-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#00236f]/20 focus:border-[#00236f] outline-none transition-all bg-white";
@@ -23,7 +23,8 @@ export default function RegisterPage() {
 
   useEffect(() => {
     // Hard navigation so the middleware sees the auth cookie (see login page).
-    if (getAccessToken()) window.location.assign((process.env.NEXT_PUBLIC_BASE_PATH ?? "") + "/dashboard");
+    // Checked against the cookie, not localStorage — see hasSessionCookie().
+    if (hasSessionCookie()) window.location.assign((process.env.NEXT_PUBLIC_BASE_PATH ?? "") + "/dashboard");
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {

@@ -9,6 +9,15 @@ export function getAccessToken(): string | null {
   return localStorage.getItem('access_token');
 }
 
+// Mirrors what middleware.ts checks server-side. localStorage's access_token
+// has no expiry of its own, so it can outlive the cookie (max-age=3600) and
+// wrongly look "logged in" — checking the cookie instead keeps this in sync
+// with what the middleware will actually accept.
+export function hasSessionCookie(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.cookie.split('; ').some((c) => c.startsWith('access_token='));
+}
+
 export function setTokens(access: string, refresh: string) {
   localStorage.setItem('access_token', access);
   localStorage.setItem('refresh_token', refresh);
