@@ -38,6 +38,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         return user
 
 
+class AcceptInvitationAccountSerializer(serializers.Serializer):
+    """Sets up the account for an invitee who has no existing user yet."""
+    first_name = serializers.CharField(max_length=100)
+    last_name = serializers.CharField(max_length=100)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)

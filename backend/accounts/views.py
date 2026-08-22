@@ -14,7 +14,7 @@ from .models import User, Workspace, TeamMember, Invitation
 from .serializers import (
     RegisterSerializer, LoginSerializer, UserSerializer,
     WorkspaceSerializer, TeamMemberSerializer, InvitationSerializer,
-    PasswordChangeSerializer,
+    PasswordChangeSerializer, AcceptInvitationAccountSerializer,
 )
 from .tasks import send_invite_email
 
@@ -319,9 +319,13 @@ _detail_serializer = inline_serializer(
     tags=[_AUTH_TAG],
     summary='Accept workspace invitation',
     description=(
-        'Accepts a pending invitation by its UUID token. The authenticated user is added to the '
-        'workspace with the role specified in the invitation. Returns 400 if the token is invalid '
-        'or the invitation has expired.'
+        'Accepts a pending invitation by its UUID token and adds the user to the workspace with '
+        'the role specified in the invitation. If the caller is authenticated, their account is '
+        'used directly. If not, and no account exists yet for the invited email, pass '
+        'first_name/last_name/password in the body to create one in the same step — the response '
+        'then includes access/refresh tokens. If an account already exists for that email, the '
+        'caller must log in first (401). Returns 400 if the token is invalid or expired, and 403 '
+        'if an authenticated caller\'s email does not match the invitation.'
     ),
     parameters=[
         OpenApiParameter(
@@ -331,11 +335,12 @@ _detail_serializer = inline_serializer(
             description='Invitation token (UUID) sent to the invitee',
         )
     ],
-    request=None,
+    request=AcceptInvitationAccountSerializer,
     responses={
         200: _detail_serializer,
-        400: OpenApiResponse(description='Invalid token or invitation expired'),
-        401: OpenApiResponse(description='Authentication required'),
+        400: OpenApiResponse(description='Invalid token, invitation expired, or invalid account details'),
+        401: OpenApiResponse(description='Authentication required (an account already exists for this email)'),
+        403: OpenApiResponse(description="Invitation was sent to a different email address"),
     },
 )
 class AcceptInvitationView(generics.GenericAPIView):
@@ -360,6 +365,7 @@ class AcceptInvitationView(generics.GenericAPIView):
             'workspace_name': invitation.workspace.name,
             'role': invitation.role,
             'email': invitation.email,
+            'has_account': User.objects.filter(email__iexact=invitation.email).exists(),
         })
 
     def post(self, request, token):
@@ -367,17 +373,39 @@ class AcceptInvitationView(generics.GenericAPIView):
         if err:
             return err
 
-        if not request.user.is_authenticated:
-            return Response({'detail': 'Authentication required to accept invitation'}, status=status.HTTP_401_UNAUTHORIZED)
+        tokens = None
+
+        if request.user.is_authenticated:
+            if request.user.email.lower() != invitation.email.lower():
+                return Response(
+                    {'detail': 'This invitation was sent to a different email address.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            user = request.user
+        else:
+            if User.objects.filter(email__iexact=invitation.email).exists():
+                return Response({'detail': 'Authentication required to accept invitation'}, status=status.HTTP_401_UNAUTHORIZED)
+
+            # No account for this email yet: this request is the invitee
+            # setting a password to create one, in the same step as accepting.
+            serializer = AcceptInvitationAccountSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = User.objects.create_user(email=invitation.email, **serializer.validated_data)
+            refresh = RefreshToken.for_user(user)
+            tokens = {'access': str(refresh.access_token), 'refresh': str(refresh)}
 
         TeamMember.objects.get_or_create(
             workspace=invitation.workspace,
-            user=request.user,
+            user=user,
             defaults={'role': invitation.role, 'status': TeamMember.Status.ACTIVE},
         )
         invitation.accepted = True
         invitation.save()
-        return Response({'detail': 'Invitation accepted'})
+
+        response_data = {'detail': 'Invitation accepted'}
+        if tokens:
+            response_data.update(tokens)
+        return Response(response_data)
 
 
 @extend_schema(

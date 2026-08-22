@@ -186,6 +186,7 @@ export interface InvitePreview {
   workspace_name: string;
   role: string;
   email: string;
+  has_account: boolean;
 }
 
 export async function getInvitePreview(token: string): Promise<InvitePreview> {
@@ -203,6 +204,29 @@ export async function acceptInvite(token: string): Promise<void> {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? 'Failed to accept invitation');
   }
+}
+
+export interface AcceptInviteAccountDetails {
+  first_name: string;
+  last_name: string;
+  password: string;
+}
+
+// For an invitee with no existing account: creates one and accepts the
+// invitation in the same request, returning tokens so they land signed in.
+export async function acceptInviteWithNewAccount(
+  token: string,
+  details: AcceptInviteAccountDetails
+): Promise<{ access: string; refresh: string }> {
+  const res = await apiFetch(`/api/auth/invite/accept/${token}/`, {
+    method: 'POST',
+    body: JSON.stringify(details),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail ?? 'Failed to accept invitation');
+  }
+  return data;
 }
 
 export async function getIntegrations(): Promise<Integration[]> {
