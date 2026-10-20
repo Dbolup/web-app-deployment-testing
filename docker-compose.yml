@@ -73,7 +73,7 @@ services:
         #
         # Left unset, both fall back to the production values, which is what
         # this file did before it was parameterised.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://str.ec2.alluvium.net}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://www.michaelf.cloud}
         # Must match the basePath in next.config.ts and the nginx location prefix.
         NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-/tenderflow}
     container_name: tenderflow-frontend
